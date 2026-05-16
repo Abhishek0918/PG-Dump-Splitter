@@ -10,6 +10,7 @@ from app.dependency.graph_builder import DependencyGraph
 from app.dependency.restore_order import grouped_restore_order
 from app.models.metadata import DumpObject, SplitResult
 from app.parser.pg_dump_parser import PgDumpParser
+from app.visualization import build_visualization_payload
 from app.writers.file_writer import SplitFileWriter
 from app.writers.folder_builder import FolderBuilder
 from app.writers.manifest_writer import ManifestWriter
@@ -66,6 +67,7 @@ class DumpSplitterEngine:
         fk_map = map_foreign_keys(result.objects)
         graph_payload = graph.to_dict()
         catalog_payload = build_catalog_payload(result.objects, dump_path.stem)
+        visualization_payload = build_visualization_payload(result.objects)
 
         self._emit_progress(progress_callback, 86, "writing", "Writing manifest files", min(processed_bytes, file_size))
         self.manifest_writer.write_objects(output_root, result.objects)
@@ -75,6 +77,7 @@ class DumpSplitterEngine:
         self.manifest_writer.write_json(output_root, "navigator.json", catalog_payload["navigator"])
         self.manifest_writer.write_json(output_root, "output_tree.json", catalog_payload["files"])
         self.manifest_writer.write_json(output_root, "schema_index.json", catalog_payload["schema_index"])
+        self.manifest_writer.write_json(output_root, "visualization.json", visualization_payload)
         self.manifest_writer.write_statistics(output_root, result.objects, result.warnings)
         self.manifest_writer.write_summary(output_root, result.objects, graph.edge_count(), len(restore_plan))
         if self.config.write_combined_restore:

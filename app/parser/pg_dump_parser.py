@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.extractor.dependency_extractor import detect_dependencies
+from app.extractor.table_extractor import extract_table_metadata
 from app.models.metadata import DumpObject
 from app.models.object_types import ObjectType
 from app.parser.object_detector import detect_object
@@ -31,10 +32,24 @@ class PgDumpParser:
                 name=detected.name,
                 statement=raw.text.strip() + "\n",
                 dependencies=detect_dependencies(raw.text, object_id),
+                attributes=self._extract_attributes(detected.object_type, raw.text.strip() + "\n"),
                 line_start=raw.line_start,
                 line_end=raw.line_end,
             )
             yield ParsedStatement(raw_text=raw.text, dump_object=dump_object)
+
+    @staticmethod
+    def _extract_attributes(object_type: ObjectType, statement: str) -> dict[str, object]:
+        if object_type == ObjectType.TABLE:
+            probe = DumpObject(
+                object_id="__probe__",
+                object_type=ObjectType.TABLE,
+                schema=None,
+                name="__probe__",
+                statement=statement,
+            )
+            return extract_table_metadata(probe)
+        return {}
 
     @staticmethod
     def _build_object_id(

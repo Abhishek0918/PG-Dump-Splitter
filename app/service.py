@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,11 +27,12 @@ class SplitterService:
         if not dump_path.exists() or not dump_path.is_file():
             raise FileNotFoundError(f"Dump file not found: {dump_path}")
         job_id = uuid4().hex
+        input_name = self._clean_input_name(dump_path.name)
         self.store.create_job(
             job_id=job_id,
             source_path=str(dump_path),
             source_type="path",
-            input_name=dump_path.name,
+            input_name=input_name,
             file_size_bytes=dump_path.stat().st_size,
         )
         self.executor.submit(self._run_job, job_id, dump_path)
@@ -42,8 +44,10 @@ class SplitterService:
     def submit_job_from_upload(self, upload: UploadFile) -> JobRecord:
         job_id = uuid4().hex
         raw_name = upload.filename or f"{job_id}.sql"
-        safe_name = Path(raw_name).name.replace(" ", "_")
-        target_path = self.config.uploads_dir / f"{job_id}_{safe_name}"
+        safe_name = self._clean_input_name(raw_name)
+        target_dir = self.config.uploads_dir / job_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / safe_name
         with target_path.open("wb") as handle:
             while True:
                 chunk = upload.file.read(1024 * 1024)
@@ -69,6 +73,7 @@ class SplitterService:
             job_root = self.config.jobs_dir / job_id
             output_root = job_root / "output"
             output_root.mkdir(parents=True, exist_ok=True)
+            job = self.store.get_job(job_id)
             split_result = self.engine.split_dump(
                 source_path,
                 output_root,
@@ -82,7 +87,7 @@ class SplitterService:
             )
             self.store.replace_objects(job_id, split_result.objects)
             self.store.update_progress(job_id, 96, "archiving", "Creating downloadable ZIP")
-            archive_path = self._archive_output(output_root)
+            archive_path = self._archive_output(output_root, job.input_name if job else None)
             self.store.mark_completed(
                 job_id=job_id,
                 output_dir=output_root,
@@ -93,8 +98,8 @@ class SplitterService:
         except Exception as exc:  # pragma: no cover - background task exception path
             self.store.mark_failed(job_id, str(exc))
 
-    def _archive_output(self, output_root: Path) -> Path:
-        archive_base = output_root.parent / "split_output"
+    def _archive_output(self, output_root: Path, input_name: str | None = None) -> Path:
+        archive_base = output_root.parent / self._archive_basename(input_name)
         archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=output_root)
         return Path(archive_path)
 
@@ -130,6 +135,15 @@ class SplitterService:
             tree = build_output_tree(output_dir)
         return {"tree": tree, "manifest": manifest}
 
+    def get_visualization_payload(self, job_id: str) -> dict:
+        output_dir = self.get_output_dir(job_id)
+        if output_dir is None or not output_dir.exists():
+            raise FileNotFoundError("Visualization is not ready yet")
+        path = output_dir / "manifest" / "visualization.json"
+        if not path.exists():
+            raise FileNotFoundError("Visualization manifest is missing")
+        return json.loads(path.read_text(encoding="utf-8"))
+
     def read_object_source(self, job_id: str, object_id: str) -> dict[str, str | None]:
         output_dir = self.get_output_dir(job_id)
         if output_dir is None or not output_dir.exists():
@@ -145,3 +159,18 @@ class SplitterService:
             "path": str(obj["path"]),
             "sql": source_path.read_text(encoding="utf-8"),
         }
+
+    @staticmethod
+    def _clean_input_name(raw_name: str) -> str:
+        safe_name = Path(raw_name).name.replace(" ", "_")
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", safe_name)
+        safe_name = re.sub(r"^[0-9a-f]{32}_", "", safe_name, flags=re.IGNORECASE)
+        return safe_name or "dump.sql"
+
+    @staticmethod
+    def _archive_basename(input_name: str | None) -> str:
+        stem = Path(input_name or "dump").stem
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")
+        if not stem:
+            stem = "dump"
+        return f"{stem}_split_output"

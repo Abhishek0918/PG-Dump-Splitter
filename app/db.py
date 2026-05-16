@@ -117,6 +117,7 @@ class SQLiteStore:
             object_name TEXT NOT NULL,
             file_path TEXT,
             dependencies_json TEXT NOT NULL,
+            attributes_json TEXT NOT NULL DEFAULT '{}',
             line_start INTEGER,
             line_end INTEGER,
             FOREIGN KEY(job_id) REFERENCES jobs(job_id)
@@ -125,6 +126,7 @@ class SQLiteStore:
         with self._connect() as connection:
             connection.executescript(ddl)
             self._migrate_jobs_schema(connection)
+            self._migrate_objects_schema(connection)
             connection.commit()
 
     def _migrate_jobs_schema(self, connection: sqlite3.Connection) -> None:
@@ -143,6 +145,16 @@ class SQLiteStore:
         for name, definition in columns.items():
             if name not in existing:
                 connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
+
+    def _migrate_objects_schema(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute("PRAGMA table_info(objects)").fetchall()
+        existing = {row["name"] for row in rows}
+        columns = {
+            "attributes_json": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for name, definition in columns.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE objects ADD COLUMN {name} {definition}")
 
     def create_job(
         self,
@@ -340,10 +352,11 @@ class SQLiteStore:
                     object_name,
                     file_path,
                     dependencies_json,
+                    attributes_json,
                     line_start,
                     line_end
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -354,6 +367,7 @@ class SQLiteStore:
                         obj.name,
                         obj.path,
                         json.dumps(obj.dependencies),
+                        json.dumps(obj.attributes),
                         obj.line_start,
                         obj.line_end,
                     )
@@ -399,7 +413,7 @@ class SQLiteStore:
 
     def list_objects(self, job_id: str, schema: str | None = None, object_type: str | None = None) -> list[dict[str, Any]]:
         query = """
-            SELECT object_id, object_type, schema_name, object_name, file_path, dependencies_json, line_start, line_end
+            SELECT object_id, object_type, schema_name, object_name, file_path, dependencies_json, attributes_json, line_start, line_end
             FROM objects
             WHERE job_id = ?
         """
@@ -422,6 +436,7 @@ class SQLiteStore:
                 "name": row["object_name"],
                 "path": row["file_path"],
                 "dependencies": json.loads(row["dependencies_json"]),
+                "attributes": json.loads(row["attributes_json"] or "{}"),
                 "line_start": row["line_start"],
                 "line_end": row["line_end"],
             }
@@ -432,7 +447,7 @@ class SQLiteStore:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT object_id, object_type, schema_name, object_name, file_path, dependencies_json, line_start, line_end
+                SELECT object_id, object_type, schema_name, object_name, file_path, dependencies_json, attributes_json, line_start, line_end
                 FROM objects
                 WHERE job_id = ? AND object_id = ?
                 """,
@@ -447,6 +462,7 @@ class SQLiteStore:
             "name": row["object_name"],
             "path": row["file_path"],
             "dependencies": json.loads(row["dependencies_json"]),
+            "attributes": json.loads(row["attributes_json"] or "{}"),
             "line_start": row["line_start"],
             "line_end": row["line_end"],
         }

@@ -103,6 +103,16 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Manifest file missing")
         return service.get_output_explorer(job_id)["manifest"]
 
+    @app.get("/api/jobs/{job_id}/visualization")
+    def get_job_visualization(job_id: str) -> dict[str, object]:
+        job = service.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        try:
+            return service.get_visualization_payload(job_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.get("/api/jobs/{job_id}/source")
     def get_object_source(job_id: str, object_id: str = Query(...)) -> dict[str, str | None]:
         job = service.get_job(job_id)
@@ -123,6 +133,7 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         archive = Path(job.archive_path)
         if not archive.exists():
             raise HTTPException(status_code=404, detail="Archive file missing")
-        return FileResponse(archive, media_type="application/zip", filename=f"{job_id}_split_output.zip")
+        download_name = f"{Path(job.input_name or 'dump').stem}_split_output.zip"
+        return FileResponse(archive, media_type="application/zip", filename=download_name)
 
     return app

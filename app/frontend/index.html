@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PGSplit Enterprise</title>
+  <title>PG Dump Splitter</title>
   <link rel="stylesheet" href="/ui/styles.css" />
 </head>
 <body>
@@ -11,102 +11,150 @@
     <div class="brand">
       <div class="brand-mark">PG</div>
       <div>
-        <h1>PGSplit Enterprise</h1>
-        <p>DBeaver-style PostgreSQL dump splitter workspace</p>
+        <h1>PG Dump Splitter</h1>
+        <p>DBeaver-style PostgreSQL dump splitter</p>
       </div>
     </div>
     <div class="topbar-actions">
-      <a id="download-link" class="button-link disabled" href="#" aria-disabled="true">Download ZIP</a>
-      <a id="manifest-link" class="button-link disabled" href="#" target="_blank" rel="noopener" aria-disabled="true">Open Manifest</a>
+      <button type="button" class="icon-button" aria-label="Help">?</button>
+      <a id="manifest-link" class="button-link disabled" href="#" target="_blank" rel="noopener" aria-disabled="true">Manifest</a>
     </div>
   </header>
 
   <main class="workspace">
-    <aside class="rail">
-      <section class="panel hero-panel">
-        <span class="eyebrow">Workspace</span>
-        <h2>Split large PostgreSQL dumps into a navigable project</h2>
-        <p>Process `.sql` dumps, inspect schemas like DBeaver, and review generated restore assets without leaving the browser.</p>
-      </section>
-
-      <section class="panel">
-        <div class="toolbar compact">
-          <div class="segmented" role="tablist" aria-label="Input method">
-            <button id="mode-path" class="segment active" type="button">Use Path</button>
-            <button id="mode-upload" class="segment" type="button">Upload File</button>
+    <aside class="left-column">
+      <section class="card split-card">
+        <div class="card-title">
+          <div class="card-icon">DB</div>
+          <div>
+            <h2>Split large PostgreSQL dumps into a navigable project</h2>
+            <p>Process `.sql` dumps, inspect schemas like DBeaver, and review generated restore assets without leaving the browser.</p>
           </div>
+        </div>
+
+        <div class="segmented" role="tablist" aria-label="Input method">
+          <button id="mode-path" class="segment active" type="button">Use Path</button>
+          <button id="mode-upload" class="segment" type="button">Upload File</button>
         </div>
 
         <form id="path-form" class="input-form active">
           <label for="dump-path">SQL dump path</label>
-          <div class="submit-row">
-            <input id="dump-path" type="text" placeholder="C:\Users\abhishek.singh\Downloads\enterprise_dump.sql" />
-            <button id="path-submit" type="submit">Start Split</button>
+          <div class="field-row">
+            <input id="dump-path" type="text" placeholder="Enter the path" />
           </div>
         </form>
 
         <form id="upload-form" class="input-form">
           <label for="dump-file">SQL dump file</label>
-          <div class="submit-row">
+          <div class="field-row upload-row">
             <input id="dump-file" type="file" accept=".sql" />
-            <button id="upload-submit" type="submit">Upload</button>
           </div>
         </form>
-      </section>
 
-      <section class="panel progress-panel">
-        <div class="status-line">
-          <div>
-            <strong id="status-label">Idle</strong>
-            <span id="step-label">Choose an input method to begin.</span>
+        <div class="run-mode">
+          <span class="run-mode-label">Choose mode</span>
+          <div class="segmented" role="tablist" aria-label="Processing mode">
+            <button id="run-splitter" class="segment active" type="button">Use Splitter</button>
+            <button id="run-visualization" class="segment" type="button">Use Visualization</button>
           </div>
-          <span id="percent-label">0%</span>
+        </div>
+
+        <button id="path-submit" class="primary-button full-width" type="submit" form="path-form">Start Split</button>
+        <button id="upload-submit" class="primary-button full-width hidden" type="submit" form="upload-form">Upload &amp; Process</button>
+
+        <div class="or-divider"><span>OR</span></div>
+
+        <div class="drop-zone">
+          <strong>Drag &amp; drop .sql file here</strong>
+          <span>Supports .sql files for local processing</span>
+        </div>
+
+        <div class="progress-summary">
+          <div class="status-inline">
+            <span class="status-label">Status:</span>
+            <strong id="status-label" class="status-value">Waiting to start</strong>
+          </div>
+          <span id="percent-label" class="percent-value">0%</span>
         </div>
         <div class="progress-track" aria-label="Processing progress">
           <div id="progress-bar" class="progress-bar"></div>
         </div>
+        <div id="step-label" class="step-label">Choose an input method to begin.</div>
       </section>
 
-      <section class="panel">
+      <section class="card">
         <div class="section-header">
-          <h2>Recent Jobs</h2>
+          <h3>Recent Jobs</h3>
           <button id="refresh-jobs" type="button" class="ghost-button">Refresh</button>
         </div>
         <div id="jobs-list" class="jobs-list">No jobs yet.</div>
       </section>
     </aside>
 
-    <section class="center-pane">
-      <section class="panel">
+    <section class="center-column">
+      <section class="card explorer-card">
         <div class="section-header">
-          <div>
-            <span class="eyebrow">Database Navigator</span>
-            <h2>DBeaver-style Project Structure</h2>
+          <div class="section-title">
+            <div class="mini-icon">ER</div>
+            <h3>DBeaver-style Project Structure</h3>
           </div>
           <div class="view-toggle">
             <button id="navigator-tab" class="nav-tab active" type="button">Navigator</button>
             <button id="files-tab" class="nav-tab" type="button">Output Files</button>
+            <button id="erd-tab" class="nav-tab" type="button">ERD</button>
+            <button id="dependency-tab" class="nav-tab" type="button">Dependency Graph</button>
+            <button id="object-dependency-tab" class="nav-tab" type="button">Object Dependencies</button>
           </div>
         </div>
 
-        <div class="explorer-toolbar">
-          <input id="object-filter" type="text" placeholder="Filter schemas, tables, views, functions..." />
+        <div class="search-row">
+          <input id="object-filter" type="text" placeholder="Filter schemas, tables, views..." />
+          <span class="search-icon">Go</span>
         </div>
 
+        <div id="message" class="message"></div>
+
         <div id="navigator-view" class="explorer-view active">
-          <div id="navigator-wrap" class="tree-wrap empty-state">No completed job selected.</div>
+          <div id="navigator-wrap" class="tree-wrap empty-state"></div>
         </div>
         <div id="files-view" class="explorer-view">
-          <div id="tree-wrap" class="tree-wrap empty-state">No generated file tree available.</div>
+          <div id="tree-wrap" class="tree-wrap empty-state"></div>
+        </div>
+        <div id="erd-view" class="explorer-view">
+          <div id="erd-wrap" class="tree-wrap empty-state"></div>
+        </div>
+        <div id="dependency-view" class="explorer-view">
+          <div id="dependency-wrap" class="tree-wrap empty-state"></div>
+        </div>
+        <div id="object-dependency-view" class="explorer-view">
+          <div id="object-dependency-wrap" class="tree-wrap empty-state"></div>
         </div>
       </section>
     </section>
 
-    <aside class="inspector">
-      <section class="panel">
-        <span class="eyebrow">Execution</span>
-        <h2>Job Details</h2>
-        <dl class="details-grid">
+    <aside class="right-column">
+      <section class="card downloads-card">
+        <div class="section-header">
+          <div class="section-title">
+            <div class="mini-icon">DL</div>
+            <h3>Downloads</h3>
+          </div>
+          <a id="download-link" class="text-link disabled" href="#" aria-disabled="true">Download</a>
+        </div>
+        <div class="download-panel">
+          <div class="download-name">Split output archive</div>
+          <div class="download-bar">
+            <div class="download-bar-fill"></div>
+          </div>
+          <div class="download-meta">Generated after a completed split job</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-title plain">
+          <h3>Job Details</h3>
+        </div>
+        <dl class="details-list">
           <div><dt>Job ID</dt><dd id="detail-job-id">-</dd></div>
           <div><dt>Source</dt><dd id="detail-source">-</dd></div>
           <div><dt>File Size</dt><dd id="detail-file-size">-</dd></div>
@@ -118,37 +166,10 @@
           <div><dt>Objects</dt><dd id="detail-objects">-</dd></div>
           <div><dt>Warnings</dt><dd id="detail-warnings">-</dd></div>
         </dl>
-      </section>
-
-      <section class="panel">
-        <span class="eyebrow">Manifest</span>
-        <h2>Output Summary</h2>
-        <div id="summary-grid" class="summary-grid"></div>
-      </section>
-
-      <section class="panel">
-        <div class="section-header">
-          <div>
-            <span class="eyebrow">Inspector</span>
-            <h2>Object Details</h2>
-          </div>
-          <span id="object-pill" class="object-pill">No selection</span>
+        <div class="details-actions">
+          <a id="manifest-inline-link" class="text-link disabled" href="#" target="_blank" rel="noopener" aria-disabled="true">Download Manifest</a>
         </div>
-        <div id="object-meta" class="object-meta">Select a node from the navigator to inspect its metadata.</div>
       </section>
-
-      <section class="panel code-panel">
-        <div class="section-header">
-          <div>
-            <span class="eyebrow">SQL Preview</span>
-            <h2>Generated Source</h2>
-          </div>
-          <button id="load-source" type="button" class="ghost-button" disabled>Load SQL</button>
-        </div>
-        <pre id="source-preview" class="source-preview">Select an object to preview its split SQL file.</pre>
-      </section>
-
-      <p id="message" class="message"></p>
     </aside>
   </main>
 
