@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PGSplit Enterprise</title>
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">PG</div>
+      <div>
+        <h1>PGSplit Enterprise</h1>
+        <p>DBeaver-style PostgreSQL dump splitter workspace</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <a id="download-link" class="button-link disabled" href="#" aria-disabled="true">Download ZIP</a>
+      <a id="manifest-link" class="button-link disabled" href="#" target="_blank" rel="noopener" aria-disabled="true">Open Manifest</a>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="rail">
+      <section class="panel hero-panel">
+        <span class="eyebrow">Workspace</span>
+        <h2>Split large PostgreSQL dumps into a navigable project</h2>
+        <p>Process `.sql` dumps, inspect schemas like DBeaver, and review generated restore assets without leaving the browser.</p>
+      </section>
+
+      <section class="panel">
+        <div class="toolbar compact">
+          <div class="segmented" role="tablist" aria-label="Input method">
+            <button id="mode-path" class="segment active" type="button">Use Path</button>
+            <button id="mode-upload" class="segment" type="button">Upload File</button>
+          </div>
+        </div>
+
+        <form id="path-form" class="input-form active">
+          <label for="dump-path">SQL dump path</label>
+          <div class="submit-row">
+            <input id="dump-path" type="text" placeholder="C:\Users\abhishek.singh\Downloads\enterprise_dump.sql" />
+            <button id="path-submit" type="submit">Start Split</button>
+          </div>
+        </form>
+
+        <form id="upload-form" class="input-form">
+          <label for="dump-file">SQL dump file</label>
+          <div class="submit-row">
+            <input id="dump-file" type="file" accept=".sql" />
+            <button id="upload-submit" type="submit">Upload</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel progress-panel">
+        <div class="status-line">
+          <div>
+            <strong id="status-label">Idle</strong>
+            <span id="step-label">Choose an input method to begin.</span>
+          </div>
+          <span id="percent-label">0%</span>
+        </div>
+        <div class="progress-track" aria-label="Processing progress">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Recent Jobs</h2>
+          <button id="refresh-jobs" type="button" class="ghost-button">Refresh</button>
+        </div>
+        <div id="jobs-list" class="jobs-list">No jobs yet.</div>
+      </section>
+    </aside>
+
+    <section class="center-pane">
+      <section class="panel">
+        <div class="section-header">
+          <div>
+            <span class="eyebrow">Database Navigator</span>
+            <h2>DBeaver-style Project Structure</h2>
+          </div>
+          <div class="view-toggle">
+            <button id="navigator-tab" class="nav-tab active" type="button">Navigator</button>
+            <button id="files-tab" class="nav-tab" type="button">Output Files</button>
+          </div>
+        </div>
+
+        <div class="explorer-toolbar">
+          <input id="object-filter" type="text" placeholder="Filter schemas, tables, views, functions..." />
+        </div>
+
+        <div id="navigator-view" class="explorer-view active">
+          <div id="navigator-wrap" class="tree-wrap empty-state">No completed job selected.</div>
+        </div>
+        <div id="files-view" class="explorer-view">
+          <div id="tree-wrap" class="tree-wrap empty-state">No generated file tree available.</div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="inspector">
+      <section class="panel">
+        <span class="eyebrow">Execution</span>
+        <h2>Job Details</h2>
+        <dl class="details-grid">
+          <div><dt>Job ID</dt><dd id="detail-job-id">-</dd></div>
+          <div><dt>Source</dt><dd id="detail-source">-</dd></div>
+          <div><dt>File Size</dt><dd id="detail-file-size">-</dd></div>
+          <div><dt>Status</dt><dd id="detail-status">-</dd></div>
+          <div><dt>Created</dt><dd id="detail-created">-</dd></div>
+          <div><dt>Started</dt><dd id="detail-started">-</dd></div>
+          <div><dt>Finished</dt><dd id="detail-finished">-</dd></div>
+          <div><dt>Duration</dt><dd id="detail-duration">-</dd></div>
+          <div><dt>Objects</dt><dd id="detail-objects">-</dd></div>
+          <div><dt>Warnings</dt><dd id="detail-warnings">-</dd></div>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <span class="eyebrow">Manifest</span>
+        <h2>Output Summary</h2>
+        <div id="summary-grid" class="summary-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <div>
+            <span class="eyebrow">Inspector</span>
+            <h2>Object Details</h2>
+          </div>
+          <span id="object-pill" class="object-pill">No selection</span>
+        </div>
+        <div id="object-meta" class="object-meta">Select a node from the navigator to inspect its metadata.</div>
+      </section>
+
+      <section class="panel code-panel">
+        <div class="section-header">
+          <div>
+            <span class="eyebrow">SQL Preview</span>
+            <h2>Generated Source</h2>
+          </div>
+          <button id="load-source" type="button" class="ghost-button" disabled>Load SQL</button>
+        </div>
+        <pre id="source-preview" class="source-preview">Select an object to preview its split SQL file.</pre>
+      </section>
+
+      <p id="message" class="message"></p>
+    </aside>
+  </main>
+
+  <script src="/ui/app.js"></script>
+</body>
+</html>

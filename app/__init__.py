@@ -1,0 +1,1 @@
+"""PostgreSQL dump splitter package."""
