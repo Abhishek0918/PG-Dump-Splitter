@@ -6,7 +6,7 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api_models import JobResponse, SubmitPathRequest
+from app.api_models import JobEventResponse, JobResponse, SubmitPathRequest
 from app.config import SplitterConfig
 from app.service import SplitterService
 
@@ -68,6 +68,13 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         objects = service.list_objects(job_id, schema=schema, object_type=object_type)
         return {"job_id": job_id, "count": len(objects), "items": objects}
+
+    @app.get("/api/jobs/{job_id}/events", response_model=list[JobEventResponse])
+    def get_job_events(job_id: str, limit: int = Query(default=200, ge=1, le=500)) -> list[JobEventResponse]:
+        job = service.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        return [JobEventResponse(**event) for event in service.list_events(job_id, limit=limit)]
 
     @app.get("/api/jobs/{job_id}/object")
     def get_job_object(job_id: str, object_id: str = Query(...)) -> dict[str, object]:

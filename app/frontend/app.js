@@ -1,22 +1,43 @@
+const STORAGE = {
+  theme: "pgsplit.theme",
+  layout: "pgsplit.layout",
+  pins: "pgsplit.pins",
+  compactJobs: "pgsplit.compactJobs",
+};
+
 const state = {
   inputMode: "path",
-  runMode: "splitter",
-  activeView: "navigator",
+  activeView: "overview",
   jobId: null,
-  pollingTimer: null,
   activeJob: null,
   jobs: [],
+  events: [],
   navigator: null,
   outputTree: null,
   visualization: null,
+  selectedObject: null,
+  selectedSql: "",
+  sourceBlobUrl: null,
   filterText: "",
+  jobFilter: "",
+  jobStatusFilter: "all",
+  jobSort: "created-desc",
+  pollingTimer: null,
+  metricsSamples: [],
+  pins: loadJson(STORAGE.pins, []),
+  compactJobs: localStorage.getItem(STORAGE.compactJobs) === "1",
 };
 
 const elements = {
+  root: document.documentElement,
+  workspace: document.getElementById("workspace"),
+  activeJobLabel: document.getElementById("active-job-label"),
+  themeSelect: document.getElementById("theme-select"),
+  refreshJobs: document.getElementById("refresh-jobs"),
+  manifestLink: document.getElementById("manifest-link"),
+  downloadLink: document.getElementById("download-link"),
   modePath: document.getElementById("mode-path"),
   modeUpload: document.getElementById("mode-upload"),
-  runSplitter: document.getElementById("run-splitter"),
-  runVisualization: document.getElementById("run-visualization"),
   pathForm: document.getElementById("path-form"),
   uploadForm: document.getElementById("upload-form"),
   pathSubmit: document.getElementById("path-submit"),
@@ -27,28 +48,43 @@ const elements = {
   stepLabel: document.getElementById("step-label"),
   percentLabel: document.getElementById("percent-label"),
   progressBar: document.getElementById("progress-bar"),
-  message: document.getElementById("message"),
-  downloadLink: document.getElementById("download-link"),
-  manifestLink: document.getElementById("manifest-link"),
-  manifestInlineLink: document.getElementById("manifest-inline-link"),
-  treeWrap: document.getElementById("tree-wrap"),
+  collapseLeft: document.getElementById("collapse-left"),
+  collapseRight: document.getElementById("collapse-right"),
+  objectFilter: document.getElementById("object-filter"),
   navigatorWrap: document.getElementById("navigator-wrap"),
-  erdWrap: document.getElementById("erd-wrap"),
-  dependencyWrap: document.getElementById("dependency-wrap"),
-  objectDependencyWrap: document.getElementById("object-dependency-wrap"),
-  navigatorTab: document.getElementById("navigator-tab"),
+  overviewTab: document.getElementById("overview-tab"),
   filesTab: document.getElementById("files-tab"),
   erdTab: document.getElementById("erd-tab"),
   dependencyTab: document.getElementById("dependency-tab"),
-  objectDependencyTab: document.getElementById("object-dependency-tab"),
-  navigatorView: document.getElementById("navigator-view"),
+  sqlTab: document.getElementById("sql-tab"),
+  overviewView: document.getElementById("overview-view"),
   filesView: document.getElementById("files-view"),
   erdView: document.getElementById("erd-view"),
   dependencyView: document.getElementById("dependency-view"),
-  objectDependencyView: document.getElementById("object-dependency-view"),
-  refreshJobs: document.getElementById("refresh-jobs"),
+  sqlView: document.getElementById("sql-view"),
+  treeWrap: document.getElementById("tree-wrap"),
+  erdWrap: document.getElementById("erd-wrap"),
+  dependencyWrap: document.getElementById("dependency-wrap"),
+  message: document.getElementById("message"),
+  jobFilter: document.getElementById("job-filter"),
+  jobStatusFilter: document.getElementById("job-status-filter"),
+  jobSort: document.getElementById("job-sort"),
+  jobViewToggle: document.getElementById("job-view-toggle"),
   jobsList: document.getElementById("jobs-list"),
-  objectFilter: document.getElementById("object-filter"),
+  sqlSearch: document.getElementById("sql-search"),
+  copySql: document.getElementById("copy-sql"),
+  sourceDownload: document.getElementById("source-download"),
+  sqlPreview: document.getElementById("sql-preview"),
+  consoleStage: document.getElementById("console-stage"),
+  consoleThroughput: document.getElementById("console-throughput"),
+  consoleEta: document.getElementById("console-eta"),
+  consoleLog: document.getElementById("console-log"),
+  metricObjects: document.getElementById("metric-objects"),
+  metricProcessed: document.getElementById("metric-processed"),
+  metricSpeed: document.getElementById("metric-speed"),
+  metricEta: document.getElementById("metric-eta"),
+  metricMemory: document.getElementById("metric-memory"),
+  metricEvents: document.getElementById("metric-events"),
   details: {
     jobId: document.getElementById("detail-job-id"),
     source: document.getElementById("detail-source"),
@@ -60,6 +96,11 @@ const elements = {
     duration: document.getElementById("detail-duration"),
     objects: document.getElementById("detail-objects"),
     warnings: document.getElementById("detail-warnings"),
+    objectName: document.getElementById("object-name"),
+    objectType: document.getElementById("object-type"),
+    objectSchema: document.getElementById("object-schema"),
+    objectPath: document.getElementById("object-path"),
+    objectDependencies: document.getElementById("object-dependencies"),
   },
 };
 
@@ -72,33 +113,140 @@ async function requestJson(url, options = {}) {
   return payload;
 }
 
+function initialize() {
+  applyTheme(localStorage.getItem(STORAGE.theme) || "system");
+  applyLayout(loadJson(STORAGE.layout, {}));
+  setInputMode("path");
+  setActiveView("overview");
+  bindEvents();
+  renderEmptyStates();
+  loadJobs();
+}
+
+function bindEvents() {
+  elements.themeSelect.addEventListener("change", () => applyTheme(elements.themeSelect.value));
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if ((localStorage.getItem(STORAGE.theme) || "system") === "system") {
+      applyTheme("system");
+    }
+  });
+  elements.modePath.addEventListener("click", () => setInputMode("path"));
+  elements.modeUpload.addEventListener("click", () => setInputMode("upload"));
+  elements.pathForm.addEventListener("submit", submitPath);
+  elements.uploadForm.addEventListener("submit", submitUpload);
+  elements.refreshJobs.addEventListener("click", loadJobs);
+  elements.collapseLeft.addEventListener("click", () => togglePane("left"));
+  elements.collapseRight.addEventListener("click", () => togglePane("right"));
+  elements.objectFilter.addEventListener("input", (event) => {
+    state.filterText = event.target.value.toLowerCase();
+    renderNavigator();
+    renderFiles();
+    renderErd();
+    renderDependencyGraph();
+  });
+  elements.jobFilter.addEventListener("input", (event) => {
+    state.jobFilter = event.target.value.toLowerCase();
+    renderJobs();
+  });
+  elements.jobStatusFilter.addEventListener("change", () => {
+    state.jobStatusFilter = elements.jobStatusFilter.value;
+    renderJobs();
+  });
+  elements.jobSort.addEventListener("change", () => {
+    state.jobSort = elements.jobSort.value;
+    renderJobs();
+  });
+  elements.jobViewToggle.addEventListener("click", () => {
+    state.compactJobs = !state.compactJobs;
+    localStorage.setItem(STORAGE.compactJobs, state.compactJobs ? "1" : "0");
+    renderJobs();
+  });
+  elements.sqlSearch.addEventListener("input", renderSqlPreview);
+  elements.copySql.addEventListener("click", copySql);
+  bindTab(elements.overviewTab, "overview");
+  bindTab(elements.filesTab, "files");
+  bindTab(elements.erdTab, "erd");
+  bindTab(elements.dependencyTab, "dependency");
+  bindTab(elements.sqlTab, "sql");
+  bindResizer(document.getElementById("left-resizer"), "left");
+  bindResizer(document.getElementById("right-resizer"), "right");
+  bindResizer(document.getElementById("console-resizer"), "console");
+}
+
+function bindTab(element, view) {
+  element.addEventListener("click", () => setActiveView(view));
+}
+
+function applyTheme(mode) {
+  const resolved = mode === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : mode;
+  localStorage.setItem(STORAGE.theme, mode);
+  elements.themeSelect.value = mode;
+  elements.root.dataset.theme = resolved;
+}
+
+function applyLayout(layout) {
+  if (layout.leftWidth) elements.root.style.setProperty("--left-width", `${layout.leftWidth}px`);
+  if (layout.rightWidth) elements.root.style.setProperty("--right-width", `${layout.rightWidth}px`);
+  if (layout.consoleHeight) elements.root.style.setProperty("--console-height", `${layout.consoleHeight}px`);
+  elements.workspace.classList.toggle("left-collapsed", Boolean(layout.leftCollapsed));
+  elements.workspace.classList.toggle("right-collapsed", Boolean(layout.rightCollapsed));
+}
+
+function saveLayout(patch) {
+  const layout = { ...loadJson(STORAGE.layout, {}), ...patch };
+  localStorage.setItem(STORAGE.layout, JSON.stringify(layout));
+  applyLayout(layout);
+}
+
+function togglePane(side) {
+  const layout = loadJson(STORAGE.layout, {});
+  const key = side === "left" ? "leftCollapsed" : "rightCollapsed";
+  saveLayout({ [key]: !layout[key] });
+}
+
+function bindResizer(handle, pane) {
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const styles = getComputedStyle(elements.root);
+    const startLeft = parseInt(styles.getPropertyValue("--left-width"), 10) || 330;
+    const startRight = parseInt(styles.getPropertyValue("--right-width"), 10) || 330;
+    const startConsole = parseInt(styles.getPropertyValue("--console-height"), 10) || 190;
+
+    const move = (moveEvent) => {
+      if (pane === "left") saveLayout({ leftWidth: clamp(startLeft + moveEvent.clientX - startX, 240, 520), leftCollapsed: false });
+      if (pane === "right") saveLayout({ rightWidth: clamp(startRight - (moveEvent.clientX - startX), 260, 520), rightCollapsed: false });
+      if (pane === "console") saveLayout({ consoleHeight: clamp(startConsole - (moveEvent.clientY - startY), 110, 360) });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+}
+
 function setInputMode(mode) {
   state.inputMode = mode;
   elements.modePath.classList.toggle("active", mode === "path");
   elements.modeUpload.classList.toggle("active", mode === "upload");
   elements.pathForm.classList.toggle("active", mode === "path");
   elements.uploadForm.classList.toggle("active", mode === "upload");
-  elements.pathSubmit.classList.toggle("hidden", mode !== "path");
-  elements.uploadSubmit.classList.toggle("hidden", mode !== "upload");
-  clearMessage();
-}
-
-function setRunMode(mode) {
-  state.runMode = mode;
-  elements.runSplitter.classList.toggle("active", mode === "splitter");
-  elements.runVisualization.classList.toggle("active", mode === "visualization");
 }
 
 function setActiveView(view) {
   state.activeView = view;
-  const viewMap = [
-    ["navigator", elements.navigatorTab, elements.navigatorView],
+  const views = [
+    ["overview", elements.overviewTab, elements.overviewView],
     ["files", elements.filesTab, elements.filesView],
     ["erd", elements.erdTab, elements.erdView],
     ["dependency", elements.dependencyTab, elements.dependencyView],
-    ["object-dependency", elements.objectDependencyTab, elements.objectDependencyView],
+    ["sql", elements.sqlTab, elements.sqlView],
   ];
-  for (const [key, tab, panel] of viewMap) {
+  for (const [key, tab, panel] of views) {
     tab.classList.toggle("active", key === view);
     panel.classList.toggle("active", key === view);
   }
@@ -109,61 +257,14 @@ function setBusy(isBusy) {
   elements.uploadSubmit.disabled = isBusy;
   elements.dumpPath.disabled = isBusy;
   elements.dumpFile.disabled = isBusy;
-  elements.modePath.disabled = isBusy;
-  elements.modeUpload.disabled = isBusy;
-  elements.runSplitter.disabled = isBusy;
-  elements.runVisualization.disabled = isBusy;
-}
-
-function setProgress(percent, status, step) {
-  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
-  elements.progressBar.style.width = `${safePercent}%`;
-  elements.percentLabel.textContent = `${Math.round(safePercent)}%`;
-  elements.statusLabel.textContent = humanizeStatus(status || "queued");
-  elements.stepLabel.textContent = step || "Waiting to start";
-}
-
-function renderJob(job) {
-  state.activeJob = job;
-  state.jobId = job.job_id;
-  renderJobs();
-  setProgress(job.progress_percent, job.status, job.current_step);
-
-  elements.details.jobId.textContent = job.job_id || "-";
-  elements.details.source.textContent = prettyJobName(job);
-  elements.details.fileSize.textContent = formatBytes(job.file_size_bytes);
-  elements.details.status.textContent = humanizeStatus(job.status || "-");
-  elements.details.created.textContent = formatDate(job.created_at);
-  elements.details.started.textContent = formatDate(job.started_at);
-  elements.details.finished.textContent = formatDate(job.finished_at);
-  elements.details.duration.textContent = formatDuration(job.duration_seconds);
-  elements.details.objects.textContent = formatCount(job.object_count);
-  elements.details.warnings.textContent = formatCount(job.warning_count);
-
-  if (job.status === "completed") {
-    setBusy(false);
-    stopPolling();
-    enableOutputActions(job);
-    loadJobArtifacts(job.job_id);
-  } else if (job.status === "failed") {
-    setBusy(false);
-    stopPolling();
-    showError(job.message || "Processing failed.");
-  }
 }
 
 async function submitPath(event) {
   event.preventDefault();
   const dumpPath = elements.dumpPath.value.trim();
-  if (!dumpPath) {
-    showError("Enter the path.");
-    return;
-  }
-
+  if (!dumpPath) return showError("Enter a dump path.");
   setBusy(true);
-  clearMessage();
-  setProgress(0, "queued", `Submitting ${state.runMode} job`);
-
+  clearError();
   try {
     const job = await requestJson("/api/jobs/path", {
       method: "POST",
@@ -181,33 +282,22 @@ async function submitPath(event) {
 function submitUpload(event) {
   event.preventDefault();
   const file = elements.dumpFile.files[0];
-  if (!file) {
-    showError("Select a .sql file first.");
-    return;
-  }
-
+  if (!file) return showError("Select a .sql file.");
   setBusy(true);
-  clearMessage();
-  setProgress(0, "uploading", `Uploading file for ${state.runMode}`);
-
+  clearError();
+  setProgress(0, "uploading", "Uploading SQL file");
   const formData = new FormData();
   formData.append("file", file);
-
   const request = new XMLHttpRequest();
   request.open("POST", "/api/jobs/upload");
   request.upload.onprogress = (uploadEvent) => {
-    if (!uploadEvent.lengthComputable) {
-      return;
-    }
-    const percent = Math.min(20, (uploadEvent.loaded / uploadEvent.total) * 20);
-    setProgress(percent, "uploading", `Uploaded ${formatBytes(uploadEvent.loaded)} of ${formatBytes(uploadEvent.total)}`);
+    if (!uploadEvent.lengthComputable) return;
+    setProgress(Math.min(20, (uploadEvent.loaded / uploadEvent.total) * 20), "uploading", `Uploaded ${formatBytes(uploadEvent.loaded)} of ${formatBytes(uploadEvent.total)}`);
   };
   request.onload = () => {
     try {
       const payload = JSON.parse(request.responseText || "{}");
-      if (request.status < 200 || request.status >= 300) {
-        throw new Error(payload.detail || request.statusText);
-      }
+      if (request.status < 200 || request.status >= 300) throw new Error(payload.detail || request.statusText);
       renderJob(payload);
       startPolling(payload.job_id);
     } catch (error) {
@@ -228,6 +318,7 @@ function startPolling(jobId) {
     try {
       const job = await requestJson(`/api/jobs/${jobId}`);
       renderJob(job);
+      await loadEvents(jobId);
     } catch (error) {
       stopPolling();
       setBusy(false);
@@ -237,20 +328,118 @@ function startPolling(jobId) {
 }
 
 function stopPolling() {
-  if (!state.pollingTimer) {
-    return;
-  }
-  window.clearInterval(state.pollingTimer);
+  if (state.pollingTimer) window.clearInterval(state.pollingTimer);
   state.pollingTimer = null;
 }
 
-async function loadJobArtifacts(jobId) {
-  renderExplorerPlaceholder(elements.navigatorWrap, "Loading project structure...");
-  renderExplorerPlaceholder(elements.treeWrap, "Loading output files...");
-  renderExplorerPlaceholder(elements.erdWrap, "Loading ERD...");
-  renderExplorerPlaceholder(elements.dependencyWrap, "Loading dependency graph...");
-  renderExplorerPlaceholder(elements.objectDependencyWrap, "Loading object dependencies...");
+function renderJob(job) {
+  state.activeJob = job;
+  state.jobId = job.job_id;
+  recordMetricSample(job);
+  setProgress(job.progress_percent, job.status, job.current_step);
+  renderJobDetails(job);
+  renderProgressMetrics(job);
+  updateLinks(job);
+  elements.activeJobLabel.textContent = `${prettyJobName(job)} | ${humanizeStatus(job.status)}`;
+  loadJobs(false);
+  if (job.status === "completed") {
+    setBusy(false);
+    stopPolling();
+    loadJobArtifacts(job.job_id);
+    loadEvents(job.job_id);
+  } else if (job.status === "failed") {
+    setBusy(false);
+    stopPolling();
+    loadEvents(job.job_id);
+    showError(job.message || "Processing failed.");
+  }
+}
 
+function setProgress(percent, status, step) {
+  const safe = clamp(Number(percent) || 0, 0, 100);
+  elements.progressBar.style.width = `${safe}%`;
+  elements.percentLabel.textContent = `${Math.round(safe)}%`;
+  elements.statusLabel.textContent = humanizeStatus(status || "idle");
+  elements.statusLabel.className = `status-pill ${status || "idle"}`;
+  elements.stepLabel.textContent = step || "Waiting";
+}
+
+async function loadJobs(renderFirst = true) {
+  try {
+    const jobs = await requestJson("/api/jobs?limit=100");
+    state.jobs = jobs;
+    renderJobs();
+    if (renderFirst && jobs.length && !state.activeJob) renderJob(jobs[0]);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function renderJobs() {
+  let jobs = [...state.jobs];
+  if (state.jobFilter) {
+    jobs = jobs.filter((job) => [job.job_id, job.input_name, job.source_path, job.status].some((value) => String(value || "").toLowerCase().includes(state.jobFilter)));
+  }
+  if (state.jobStatusFilter !== "all") jobs = jobs.filter((job) => job.status === state.jobStatusFilter);
+  jobs.sort(sortJobs);
+  jobs.sort((a, b) => Number(isPinned(b.job_id)) - Number(isPinned(a.job_id)));
+  elements.jobsList.classList.toggle("compact", state.compactJobs);
+  elements.jobViewToggle.textContent = state.compactJobs ? "List" : "Compact";
+  if (!jobs.length) {
+    elements.jobsList.textContent = "No jobs found.";
+    return;
+  }
+  elements.jobsList.innerHTML = jobs.map(renderJobRow).join("");
+  elements.jobsList.querySelectorAll("[data-open-job]").forEach((button) => {
+    button.addEventListener("click", () => openJob(button.dataset.openJob));
+  });
+  elements.jobsList.querySelectorAll("[data-pin-job]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      togglePin(button.dataset.pinJob);
+    });
+  });
+}
+
+function renderJobRow(job) {
+  const active = job.job_id === state.jobId ? "active" : "";
+  const pinned = isPinned(job.job_id) ? "active" : "";
+  if (state.compactJobs) {
+    return `
+      <div class="job-row ${active}">
+        <button class="job-pin ${pinned}" data-pin-job="${escapeHtml(job.job_id)}" type="button">P</button>
+        <button class="job-open" data-open-job="${escapeHtml(job.job_id)}" type="button"><span class="job-name">${escapeHtml(prettyJobName(job))}</span></button>
+        <span class="status-pill ${escapeHtml(job.status)}">${escapeHtml(humanizeStatus(job.status))}</span>
+        <span class="job-meta">${escapeHtml(formatBytes(job.file_size_bytes))}</span>
+        <span class="job-meta">${escapeHtml(formatDuration(job.duration_seconds))}</span>
+        <a class="tool-link ${job.status === "completed" ? "" : "disabled"}" href="${job.status === "completed" ? `/api/jobs/${encodeURIComponent(job.job_id)}/download` : "#"}">ZIP</a>
+      </div>
+    `;
+  }
+  return `
+    <div class="job-row ${active}">
+      <button class="job-pin ${pinned}" data-pin-job="${escapeHtml(job.job_id)}" type="button">P</button>
+      <button class="job-open" data-open-job="${escapeHtml(job.job_id)}" type="button">
+        <span class="job-name">${escapeHtml(prettyJobName(job))}</span>
+        <span class="job-meta">${escapeHtml(formatBytes(job.file_size_bytes))} | ${escapeHtml(formatDate(job.created_at))}</span>
+      </button>
+      <span class="status-pill ${escapeHtml(job.status)}">${escapeHtml(humanizeStatus(job.status))}</span>
+    </div>
+  `;
+}
+
+async function openJob(jobId) {
+  const job = await requestJson(`/api/jobs/${jobId}`);
+  renderJob(job);
+  if (job.status === "completed") await loadJobArtifacts(jobId);
+  await loadEvents(jobId);
+}
+
+async function loadJobArtifacts(jobId) {
+  renderPlaceholder(elements.navigatorWrap, "Loading objects...");
+  renderPlaceholder(elements.treeWrap, "Loading files...");
+  renderPlaceholder(elements.erdWrap, "Loading ERD...");
+  renderPlaceholder(elements.dependencyWrap, "Loading dependencies...");
   try {
     const [treePayload, visualizationPayload] = await Promise.all([
       requestJson(`/api/jobs/${jobId}/tree`),
@@ -259,9 +448,7 @@ async function loadJobArtifacts(jobId) {
     state.navigator = treePayload.manifest?.navigator || null;
     state.outputTree = treePayload.tree || null;
     state.visualization = visualizationPayload;
-    clearMessage();
     renderAllViews();
-    setActiveView(state.runMode === "visualization" ? "erd" : "navigator");
   } catch (error) {
     showError(error.message);
   }
@@ -270,119 +457,19 @@ async function loadJobArtifacts(jobId) {
 async function loadVisualizationPayload(jobId) {
   try {
     return await requestJson(`/api/jobs/${jobId}/visualization`);
-  } catch (error) {
-    const message = String(error.message || "");
-    if (!/not found|missing|ready/i.test(message)) {
-      throw error;
-    }
+  } catch {
     const objectsPayload = await requestJson(`/api/jobs/${jobId}/objects`);
     return buildVisualizationFromObjects(objectsPayload.items || []);
   }
 }
 
-function buildVisualizationFromObjects(objects) {
-  const items = Array.isArray(objects) ? objects : [];
-  const tables = items.filter((item) => item.object_type === "tables");
-  const tableIdSet = new Set(tables.map((item) => item.object_id));
-  const dependencyEdges = [];
-  const relationships = [];
-  const seenRelationships = new Set();
-
-  const erdTables = tables.map((item) => ({
-    id: item.object_id,
-    label: item.name,
-    schema: item.schema,
-    full_name: item.object_id,
-    column_count: Array.isArray(item.attributes?.columns) ? item.attributes.columns.length : 0,
-    columns: (Array.isArray(item.attributes?.columns) ? item.attributes.columns : []).map((column) => ({
-      name: column.name,
-      data_type: column.data_type,
-      not_null: Boolean(column.not_null),
-      primary_key: Boolean(column.primary_key),
-      foreign_key: Boolean(column.foreign_key),
-    })),
-  }));
-
-  for (const item of items) {
-    const dependencies = Array.isArray(item.dependencies) ? item.dependencies : [];
-    for (const dependency of dependencies) {
-      dependencyEdges.push({
-        source: dependency,
-        target: item.object_id,
-        type: "dependency",
-      });
-      if (item.object_type === "tables" && tableIdSet.has(dependency)) {
-        appendRelationship(
-          relationships,
-          seenRelationships,
-          {
-            source_table: dependency,
-            source_columns: [],
-            target_table: item.object_id,
-            target_columns: [],
-            constraint_name: null,
-            type: "foreign_key",
-          }
-        );
-      }
-    }
-
-    if (item.object_type === "tables") {
-      const foreignKeys = Array.isArray(item.attributes?.foreign_keys) ? item.attributes.foreign_keys : [];
-      for (const foreignKey of foreignKeys) {
-        appendRelationship(
-          relationships,
-          seenRelationships,
-          {
-            source_table: item.object_id,
-            source_columns: Array.isArray(foreignKey.columns) ? foreignKey.columns : [],
-            target_table: foreignKey.references_table,
-            target_columns: Array.isArray(foreignKey.references_columns) ? foreignKey.references_columns : [],
-            constraint_name: foreignKey.constraint_name || null,
-            type: "foreign_key",
-          }
-        );
-      }
-    }
+async function loadEvents(jobId) {
+  try {
+    state.events = await requestJson(`/api/jobs/${jobId}/events?limit=200`);
+    renderConsole();
+  } catch (error) {
+    elements.consoleLog.textContent = error.message;
   }
-
-  return {
-    erd: {
-      tables: erdTables,
-      relationships,
-    },
-    dependency_graph: {
-      nodes: items.map((item) => ({
-        id: item.object_id,
-        label: item.name,
-        schema: item.schema,
-        type: item.object_type,
-      })),
-      edges: dependencyEdges,
-    },
-    object_dependencies: items
-      .filter((item) => Array.isArray(item.dependencies) && item.dependencies.length)
-      .map((item) => ({
-        object_id: item.object_id,
-        name: item.name,
-        schema: item.schema,
-        object_type: item.object_type,
-        depends_on: item.dependencies,
-        dependency_count: item.dependencies.length,
-      }))
-      .sort((a, b) => {
-        if (b.dependency_count !== a.dependency_count) {
-          return b.dependency_count - a.dependency_count;
-        }
-        return String(a.object_id).localeCompare(String(b.object_id));
-      }),
-    statistics: {
-      table_count: erdTables.length,
-      relationship_count: relationships.length,
-      object_count: items.length,
-      dependency_count: dependencyEdges.length,
-    },
-  };
 }
 
 function renderAllViews() {
@@ -390,228 +477,293 @@ function renderAllViews() {
   renderFiles();
   renderErd();
   renderDependencyGraph();
-  renderObjectDependencies();
 }
 
 function renderNavigator() {
-  if (!state.navigator) {
-    renderExplorerPlaceholder(elements.navigatorWrap, "Project structure will appear here");
-    return;
-  }
-  const filtered = filterNavigator(state.navigator, normalizedFilterText());
-  if (!filtered) {
-    elements.navigatorWrap.classList.remove("empty-state");
-    elements.navigatorWrap.innerHTML = '<div class="empty-panel"><strong>No matching objects</strong><span>Try a broader filter for schemas, tables, or views.</span></div>';
-    return;
-  }
+  if (!state.navigator) return renderPlaceholder(elements.navigatorWrap, "No objects loaded.");
+  const filtered = filterTree(state.navigator, state.filterText, "navigator");
   elements.navigatorWrap.classList.remove("empty-state");
-  elements.navigatorWrap.innerHTML = renderNavigatorNode(filtered, true);
+  elements.navigatorWrap.innerHTML = filtered ? renderNavigatorNode(filtered, true) : "No matching objects.";
+  bindObjectClicks(elements.navigatorWrap);
 }
 
 function renderFiles() {
-  if (!state.outputTree) {
-    renderExplorerPlaceholder(elements.treeWrap, "Output files will appear here");
-    return;
-  }
-  const filtered = filterFileTree(state.outputTree, normalizedFilterText());
-  if (!filtered) {
-    elements.treeWrap.classList.remove("empty-state");
-    elements.treeWrap.innerHTML = '<div class="empty-panel"><strong>No matching files</strong><span>Try a broader search for file names, paths, or object types.</span></div>';
-    return;
-  }
+  if (!state.outputTree) return renderPlaceholder(elements.treeWrap, "No output files loaded.");
+  const filtered = filterTree(state.outputTree, state.filterText, "file");
   elements.treeWrap.classList.remove("empty-state");
-  elements.treeWrap.innerHTML = renderFileTree(filtered, true);
+  elements.treeWrap.innerHTML = filtered ? renderFileNode(filtered, true) : "No matching files.";
+  bindObjectClicks(elements.treeWrap);
 }
 
 function renderErd() {
   const erd = state.visualization?.erd;
-  if (!erd || !Array.isArray(erd.tables)) {
-    renderExplorerPlaceholder(elements.erdWrap, "ERD will appear here");
+  if (!erd?.tables) return renderPlaceholder(elements.erdWrap, "ERD is not ready.");
+  const filtered = filterErd(erd, state.filterText);
+  if (!filtered.tables.length) {
+    elements.erdWrap.innerHTML = "No matching ERD tables.";
     return;
   }
-
-  const filteredErd = filterErdDiagram(erd, normalizedFilterText());
-  if (!filteredErd.tables.length) {
-    elements.erdWrap.classList.remove("empty-state");
-    elements.erdWrap.innerHTML = '<div class="empty-panel"><strong>No matching ERD tables</strong><span>Try searching by schema, table name, or column name.</span></div>';
-    return;
-  }
-
-  const layout = buildErdLayout(filteredErd.tables);
-  const cards = layout.tables.map((table) => renderErdCard(table)).join("");
-  const paths = filteredErd.relationships
-    .map((relationship) => renderErdRelationship(relationship, layout.tableMap))
-    .filter(Boolean)
-    .join("");
-
+  const layout = buildErdLayout(filtered.tables);
   elements.erdWrap.classList.remove("empty-state");
   elements.erdWrap.innerHTML = `
-    ${renderVizStats({
-      table_count: filteredErd.tables.length,
-      relationship_count: filteredErd.relationships.length,
-      object_count: filteredErd.tables.length,
-      dependency_count: filteredErd.relationships.length,
-    })}
-    <div class="erd-stage">
-      <div class="erd-canvas" style="width:${layout.width}px;height:${layout.height}px;">
-        <svg class="erd-svg" viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="none">
-          ${paths}
-        </svg>
-        ${cards}
-      </div>
-    </div>
+    ${renderVizStats({ table_count: filtered.tables.length, relationship_count: filtered.relationships.length, object_count: filtered.tables.length, dependency_count: filtered.relationships.length })}
+    <div class="erd-stage"><div class="erd-canvas" style="width:${layout.width}px;height:${layout.height}px;">
+      <svg class="erd-svg" viewBox="0 0 ${layout.width} ${layout.height}">${filtered.relationships.map((edge) => renderErdRelationship(edge, layout.tableMap)).join("")}</svg>
+      ${layout.tables.map(renderErdCard).join("")}
+    </div></div>
   `;
 }
 
 function renderDependencyGraph() {
   const graph = state.visualization?.dependency_graph;
-  if (!graph) {
-    renderExplorerPlaceholder(elements.dependencyWrap, "Dependency graph will appear here");
-    return;
-  }
-
-  const filteredGraph = filterDependencyGraph(graph, normalizedFilterText());
-  if (!filteredGraph.nodes.length && !filteredGraph.edges.length) {
-    elements.dependencyWrap.classList.remove("empty-state");
-    elements.dependencyWrap.innerHTML = '<div class="empty-panel"><strong>No matching dependencies</strong><span>Try searching by object name, schema, or dependency id.</span></div>';
-    return;
-  }
-
-  const edges = filteredGraph.edges
-    .slice(0, 120)
-    .map(
-      (edge) => `
-        <div class="edge-row">
-          <span>${escapeHtml(shortObjectLabel(edge.source))}</span>
-          <span class="edge-arrow">→</span>
-          <span>${escapeHtml(shortObjectLabel(edge.target))}</span>
-        </div>
-      `
-    )
-    .join("");
-
+  if (!graph) return renderPlaceholder(elements.dependencyWrap, "Dependency graph is not ready.");
+  const filtered = filterDependencyGraph(graph, state.filterText);
   elements.dependencyWrap.classList.remove("empty-state");
   elements.dependencyWrap.innerHTML = `
-    ${renderVizStats({
-      table_count: 0,
-      relationship_count: 0,
-      object_count: filteredGraph.nodes.length,
-      dependency_count: filteredGraph.edges.length,
-    })}
-    <div class="edge-list">${edges || '<div class="empty-panel"><strong>No dependencies recorded</strong></div>'}</div>
-  `;
-}
-
-function renderObjectDependencies() {
-  const rows = state.visualization?.object_dependencies || [];
-  if (!rows.length) {
-    renderExplorerPlaceholder(elements.objectDependencyWrap, "Object dependencies will appear here");
-    return;
-  }
-
-  const filteredRows = filterObjectDependencies(rows, normalizedFilterText());
-  if (!filteredRows.length) {
-    elements.objectDependencyWrap.classList.remove("empty-state");
-    elements.objectDependencyWrap.innerHTML = '<div class="empty-panel"><strong>No matching dependency objects</strong><span>Try searching by object id, schema, or dependency name.</span></div>';
-    return;
-  }
-
-  const cards = filteredRows
-    .slice(0, 80)
-    .map(
-      (row) => `
-        <section class="dependency-card">
-          <h4>${escapeHtml(row.object_id)}</h4>
-          <div class="dependency-chip-row">
-            ${(row.depends_on || []).map((dependency) => `<span class="dependency-chip">${escapeHtml(shortObjectLabel(dependency))}</span>`).join("")}
-          </div>
-        </section>
-      `
-    )
-    .join("");
-
-  elements.objectDependencyWrap.classList.remove("empty-state");
-  elements.objectDependencyWrap.innerHTML = `
-    ${renderVizStats({
-      table_count: 0,
-      relationship_count: 0,
-      object_count: filteredRows.length,
-      dependency_count: filteredRows.reduce((total, row) => total + (row.dependency_count || 0), 0),
-    })}
-    <div class="dependency-list">${cards}</div>
-  `;
-}
-
-function renderVizStats(stats) {
-  const safe = stats || {};
-  return `
-    <div class="viz-stat-row">
-      <div class="viz-stat"><span>Tables</span><strong>${formatCount(safe.table_count)}</strong></div>
-      <div class="viz-stat"><span>Relationships</span><strong>${formatCount(safe.relationship_count)}</strong></div>
-      <div class="viz-stat"><span>Objects</span><strong>${formatCount(safe.object_count)}</strong></div>
-      <div class="viz-stat"><span>Dependencies</span><strong>${formatCount(safe.dependency_count)}</strong></div>
-    </div>
+    ${renderVizStats({ object_count: filtered.nodes.length, dependency_count: filtered.edges.length })}
+    <div class="edge-list">${filtered.edges.slice(0, 180).map((edge) => `<div class="edge-row"><span>${escapeHtml(shortObjectLabel(edge.source))}</span><strong>-></strong><span>${escapeHtml(shortObjectLabel(edge.target))}</span></div>`).join("") || "No dependencies recorded."}</div>
   `;
 }
 
 function renderNavigatorNode(node, isRoot = false) {
   const children = (node.children || []).map((child) => renderNavigatorNode(child)).join("");
-  const count = node.count !== undefined ? `<span class="tree-count">${escapeHtml(node.count)}</span>` : "";
+  const objectAttrs = node.object_id ? `data-object-id="${escapeHtml(node.object_id)}"` : "";
+  const clickable = node.object_id ? "clickable" : "";
+  const selected = node.object_id && state.selectedObject?.object_id === node.object_id ? "selected" : "";
   return `
     <div class="tree-node ${isRoot ? "root" : ""}">
-      <div class="tree-label">
-        <span class="tree-icon">${escapeHtml(iconForKind(node.icon || node.kind))}</span>
+      <div class="tree-label ${clickable} ${selected}" ${objectAttrs}>
+        <span class="tree-icon icon-${escapeHtml(node.icon || node.object_type || node.kind || "object")}">${escapeHtml(iconText(node.icon || node.object_type || node.kind))}</span>
         <strong>${escapeHtml(node.name)}</strong>
-        ${count}
+        ${node.count !== undefined ? `<span class="tree-count">${escapeHtml(node.count)}</span>` : ""}
       </div>
       ${children}
     </div>
   `;
 }
 
-function renderFileTree(node, isRoot = true) {
+function renderFileNode(node, isRoot = false) {
   const isFile = node.type === "file";
-  const objectType = node.object_type ? `<span class="tree-tag">${escapeHtml(node.object_type)}</span>` : "";
-  const children = (node.children || []).map((child) => renderFileTree(child, false)).join("");
+  const objectAttrs = node.object_id ? `data-object-id="${escapeHtml(node.object_id)}"` : "";
+  const selected = node.object_id && state.selectedObject?.object_id === node.object_id ? "selected" : "";
+  const children = (node.children || []).map((child) => renderFileNode(child)).join("");
   return `
     <div class="tree-node ${isRoot ? "root" : ""}">
-      <div class="tree-label ${isFile ? "file-link" : ""}">
-        <span class="tree-icon">${escapeHtml(isFile ? "sql" : "dir")}</span>
+      <div class="tree-label ${isFile ? "file-link" : ""} ${selected}" ${objectAttrs}>
+        <span class="tree-icon icon-${escapeHtml(node.object_type || node.type)}">${escapeHtml(iconText(node.object_type || node.type))}</span>
         <strong>${escapeHtml(node.name)}</strong>
-        ${objectType}
+        ${node.object_type ? `<span class="tree-tag">${escapeHtml(node.object_type)}</span>` : ""}
       </div>
       ${children}
     </div>
   `;
+}
+
+function bindObjectClicks(root) {
+  root.querySelectorAll("[data-object-id]").forEach((element) => {
+    element.addEventListener("click", () => selectObject(element.dataset.objectId));
+  });
+}
+
+async function selectObject(objectId) {
+  if (!state.jobId || !objectId) return;
+  try {
+    const object = await requestJson(`/api/jobs/${state.jobId}/object?object_id=${encodeURIComponent(objectId)}`);
+    state.selectedObject = object;
+    renderObjectDetails(object);
+    await loadSqlPreview(objectId);
+    setActiveView("sql");
+    renderNavigator();
+    renderFiles();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+async function loadSqlPreview(objectId) {
+  try {
+    const payload = await requestJson(`/api/jobs/${state.jobId}/source?object_id=${encodeURIComponent(objectId)}`);
+    state.selectedSql = payload.sql || "";
+    if (state.sourceBlobUrl) URL.revokeObjectURL(state.sourceBlobUrl);
+    state.sourceBlobUrl = URL.createObjectURL(new Blob([state.selectedSql], { type: "text/sql" }));
+    elements.sourceDownload.href = state.sourceBlobUrl;
+    elements.sourceDownload.download = `${safeFilename(state.selectedObject?.name || "object")}.sql`;
+    elements.sourceDownload.classList.remove("disabled");
+    elements.sourceDownload.removeAttribute("aria-disabled");
+    renderSqlPreview();
+  } catch (error) {
+    state.selectedSql = `-- ${error.message}`;
+    renderSqlPreview();
+  }
+}
+
+function renderSqlPreview() {
+  const query = elements.sqlSearch.value.trim();
+  let html = highlightSql(state.selectedSql || "Select an object to preview SQL.");
+  if (query) {
+    const escaped = escapeRegExp(escapeHtml(query));
+    html = html.replace(new RegExp(escaped, "gi"), (match) => `<mark class="sql-hit">${match}</mark>`);
+  }
+  elements.sqlPreview.innerHTML = `<code>${html}</code>`;
+}
+
+async function copySql() {
+  if (!state.selectedSql) return;
+  await navigator.clipboard.writeText(state.selectedSql);
+}
+
+function renderJobDetails(job) {
+  elements.details.jobId.textContent = job.job_id || "-";
+  elements.details.source.textContent = prettyJobName(job);
+  elements.details.fileSize.textContent = formatBytes(job.file_size_bytes);
+  elements.details.status.textContent = humanizeStatus(job.status);
+  elements.details.created.textContent = formatDate(job.created_at);
+  elements.details.started.textContent = formatDate(job.started_at);
+  elements.details.finished.textContent = formatDate(job.finished_at);
+  elements.details.duration.textContent = formatDuration(job.duration_seconds);
+  elements.details.objects.textContent = formatCount(job.object_count || job.objects_processed);
+  elements.details.warnings.textContent = formatCount(job.warning_count);
+}
+
+function renderObjectDetails(object) {
+  elements.details.objectName.textContent = object.name || "-";
+  elements.details.objectType.textContent = object.object_type || "-";
+  elements.details.objectSchema.textContent = object.schema || "-";
+  elements.details.objectPath.textContent = object.path || "-";
+  elements.details.objectDependencies.textContent = (object.dependencies || []).join(", ") || "-";
+}
+
+function renderProgressMetrics(job) {
+  const speed = computeThroughput();
+  const remainingBytes = Math.max((job.file_size_bytes || 0) - (job.processed_bytes || 0), 0);
+  const eta = speed > 0 && remainingBytes > 0 ? remainingBytes / speed : null;
+  elements.metricObjects.textContent = formatCount(job.object_count || job.objects_processed);
+  elements.metricProcessed.textContent = `${formatBytes(job.processed_bytes)} / ${formatBytes(job.file_size_bytes)}`;
+  elements.metricSpeed.textContent = speed ? `${formatBytes(speed)}/s` : "-";
+  elements.metricEta.textContent = eta ? formatDuration(eta) : "-";
+  elements.metricMemory.textContent = job.memory_bytes ? formatBytes(job.memory_bytes) : "Unavailable";
+  elements.metricEvents.textContent = formatCount(job.events_count);
+  elements.consoleStage.textContent = `stage: ${job.stage || "-"}`;
+  elements.consoleThroughput.textContent = `speed: ${speed ? `${formatBytes(speed)}/s` : "-"}`;
+  elements.consoleEta.textContent = `eta: ${eta ? formatDuration(eta) : "-"}`;
+}
+
+function renderConsole() {
+  if (!state.events.length) {
+    elements.consoleLog.textContent = "No job events yet.";
+    return;
+  }
+  elements.consoleLog.innerHTML = state.events.map((event) => `
+    <div class="console-row">
+      <span>${escapeHtml(formatDate(event.created_at))}</span>
+      <span class="level-${escapeHtml(event.level)}">${escapeHtml(event.level)}</span>
+      <span>${escapeHtml(event.stage)}</span>
+      <span>${escapeHtml(event.message)}</span>
+    </div>
+  `).join("");
+  elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight;
+}
+
+function updateLinks(job) {
+  const complete = job.status === "completed";
+  elements.downloadLink.classList.toggle("disabled", !complete);
+  elements.manifestLink.classList.toggle("disabled", !complete);
+  elements.downloadLink.href = complete ? `/api/jobs/${job.job_id}/download` : "#";
+  elements.manifestLink.href = complete ? `/api/jobs/${job.job_id}/manifest` : "#";
+}
+
+function recordMetricSample(job) {
+  const now = Date.now();
+  state.metricsSamples.push({ time: now, processed: Number(job.processed_bytes) || 0 });
+  state.metricsSamples = state.metricsSamples.filter((sample) => now - sample.time <= 8000);
+}
+
+function computeThroughput() {
+  if (state.metricsSamples.length < 2) return 0;
+  const first = state.metricsSamples[0];
+  const last = state.metricsSamples[state.metricsSamples.length - 1];
+  const seconds = (last.time - first.time) / 1000;
+  if (seconds <= 0) return 0;
+  return Math.max((last.processed - first.processed) / seconds, 0);
+}
+
+function buildVisualizationFromObjects(objects) {
+  const items = Array.isArray(objects) ? objects : [];
+  const tables = items.filter((item) => item.object_type === "tables");
+  const tableIds = new Set(tables.map((table) => table.object_id));
+  const relationships = [];
+  const dependencyEdges = [];
+  for (const item of items) {
+    for (const dependency of item.dependencies || []) {
+      dependencyEdges.push({ source: dependency, target: item.object_id, type: "dependency" });
+      if (item.object_type === "tables" && tableIds.has(dependency)) {
+        relationships.push({ source_table: dependency, target_table: item.object_id, source_columns: [], target_columns: [], type: "foreign_key" });
+      }
+    }
+  }
+  return {
+    erd: {
+      tables: tables.map((item) => ({
+        id: item.object_id,
+        label: item.name,
+        schema: item.schema,
+        full_name: item.object_id,
+        columns: (item.attributes?.columns || []).map((column) => ({ name: column.name, data_type: column.data_type, primary_key: column.primary_key, foreign_key: column.foreign_key, not_null: column.not_null })),
+      })),
+      relationships,
+    },
+    dependency_graph: {
+      nodes: items.map((item) => ({ id: item.object_id, label: item.name, schema: item.schema, type: item.object_type })),
+      edges: dependencyEdges,
+    },
+  };
+}
+
+function renderVizStats(stats) {
+  return `
+    <div class="viz-stat-row">
+      <div class="viz-stat"><span>Tables</span><strong>${formatCount(stats.table_count)}</strong></div>
+      <div class="viz-stat"><span>Relationships</span><strong>${formatCount(stats.relationship_count)}</strong></div>
+      <div class="viz-stat"><span>Objects</span><strong>${formatCount(stats.object_count)}</strong></div>
+      <div class="viz-stat"><span>Dependencies</span><strong>${formatCount(stats.dependency_count)}</strong></div>
+    </div>
+  `;
+}
+
+function buildErdLayout(tables) {
+  const width = 310;
+  const gapX = 54;
+  const gapY = 44;
+  const padding = 24;
+  const columns = Math.max(1, Math.min(3, Math.ceil(Math.sqrt(tables.length))));
+  const heights = Array.from({ length: columns }, () => padding);
+  const placed = [];
+  const tableMap = {};
+  for (const table of tables) {
+    let column = 0;
+    for (let i = 1; i < columns; i += 1) if (heights[i] < heights[column]) column = i;
+    const rowHeight = 27;
+    const headerHeight = 36;
+    const height = headerHeight + Math.max(table.columns?.length || 0, 1) * rowHeight + 14;
+    const current = { ...table, x: padding + column * (width + gapX), y: heights[column], width, height, rowHeight, headerHeight };
+    placed.push(current);
+    tableMap[table.id] = current;
+    heights[column] += height + gapY;
+  }
+  return { tables: placed, tableMap, width: padding * 2 + columns * width + Math.max(columns - 1, 0) * gapX, height: Math.max(...heights) + padding };
 }
 
 function renderErdCard(table) {
-  const columnRows = (table.columns || [])
-    .map(
-      (column) => `
-        <div class="erd-column-row">
-          <div class="erd-column-main">
-            <span class="erd-column-name">${escapeHtml(column.name)}</span>
-            <div class="erd-column-flags">
-              ${column.primary_key ? '<span class="erd-flag erd-flag-key">PK</span>' : ""}
-              ${column.foreign_key ? '<span class="erd-flag erd-flag-link">FK</span>' : ""}
-            </div>
-          </div>
-          <div class="erd-column-meta">
-            <span class="erd-column-type">${escapeHtml(column.data_type || "")}</span>
-            ${column.not_null ? '<span class="erd-flag erd-flag-nn">NN</span>' : ""}
-          </div>
-        </div>
-      `
-    )
-    .join("");
-
+  const rows = (table.columns || []).map((column) => `
+    <div class="erd-column-row">
+      <span class="erd-column-name">${escapeHtml(column.name)}</span>
+      <span class="erd-column-type">${escapeHtml(column.data_type || "")}</span>
+    </div>
+  `).join("");
   return `
     <section class="erd-card" style="left:${table.x}px;top:${table.y}px;width:${table.width}px;">
       <div class="erd-card-header">${escapeHtml(table.full_name || table.label)}</div>
-      <div class="erd-card-body">
-        ${columnRows || '<div class="erd-column-row"><span class="erd-column-name">No parsed columns</span></div>'}
-      </div>
+      ${rows || '<div class="erd-column-row"><span>No parsed columns</span></div>'}
     </section>
   `;
 }
@@ -619,443 +771,156 @@ function renderErdCard(table) {
 function renderErdRelationship(relationship, tableMap) {
   const source = tableMap[relationship.source_table];
   const target = tableMap[relationship.target_table];
-  if (!source || !target) {
-    return "";
-  }
-  const sourceLeft = source.x <= target.x;
-  const startX = sourceLeft ? source.x + source.width : source.x;
-  const endX = sourceLeft ? target.x : target.x + target.width;
-  const startY = resolveColumnAnchorY(source, relationship.source_columns?.[0]);
-  const endY = resolveColumnAnchorY(target, relationship.target_columns?.[0]);
+  if (!source || !target) return "";
+  const startX = source.x + source.width;
+  const startY = source.y + source.headerHeight + 14;
+  const endX = target.x;
+  const endY = target.y + target.headerHeight + 14;
   const midX = startX + (endX - startX) / 2;
   return `<path class="erd-link" d="M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}" />`;
 }
 
-function resolveColumnAnchorY(table, columnName) {
-  if (!columnName || !Array.isArray(table.columns) || !table.columns.length) {
-    return table.y + table.headerHeight + table.rowHeight / 2;
-  }
-  const index = table.columns.findIndex((column) => String(column.name).toLowerCase() === String(columnName).toLowerCase());
-  const safeIndex = index >= 0 ? index : 0;
-  return table.y + table.headerHeight + safeIndex * table.rowHeight + table.rowHeight / 2;
-}
-
-function filterNavigator(node, filterText) {
-  if (!node) {
-    return null;
-  }
-  if (!filterText) {
-    return node;
-  }
-  const ownText = [node.name, node.object_type, node.schema, node.object_id]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const children = (node.children || [])
-    .map((child) => filterNavigator(child, filterText))
-    .filter(Boolean);
-  if (ownText.includes(filterText) || children.length) {
-    return { ...node, children };
-  }
+function filterTree(node, filterText, mode) {
+  if (!node || !filterText) return node;
+  const ownMatch = [node.name, node.path, node.object_id, node.object_type, node.schema].some((value) => String(value || "").toLowerCase().includes(filterText));
+  const children = (node.children || []).map((child) => filterTree(child, filterText, mode)).filter(Boolean);
+  if (ownMatch || children.length) return { ...node, children };
   return null;
 }
 
-function filterFileTree(node, filterText) {
-  if (!node) {
-    return null;
-  }
-  if (!filterText) {
-    return node;
-  }
-  const ownMatch = matchesFilter([node.name, node.path, node.type, node.object_type, node.object_id], filterText);
-  if (node.type === "file") {
-    return ownMatch ? node : null;
-  }
-  const children = (node.children || [])
-    .map((child) => filterFileTree(child, filterText))
-    .filter(Boolean);
-  if (ownMatch || children.length) {
-    return { ...node, children };
-  }
-  return null;
-}
-
-function filterErdDiagram(erd, filterText) {
-  if (!filterText) {
-    return erd;
-  }
-  const matchedTableIds = new Set(
-    (erd.tables || [])
-      .filter((table) =>
-        matchesFilter(
-          [
-            table.id,
-            table.label,
-            table.schema,
-            table.full_name,
-            ...(Array.isArray(table.columns) ? table.columns.flatMap((column) => [column.name, column.data_type]) : []),
-          ],
-          filterText
-        )
-      )
-      .map((table) => table.id)
-  );
-
-  const relationships = (erd.relationships || []).filter((relationship) => {
-    const relationshipMatch = matchesFilter(
-      [
-        relationship.source_table,
-        relationship.target_table,
-        relationship.constraint_name,
-        ...(Array.isArray(relationship.source_columns) ? relationship.source_columns : []),
-        ...(Array.isArray(relationship.target_columns) ? relationship.target_columns : []),
-      ],
-      filterText
-    );
-    return relationshipMatch || matchedTableIds.has(relationship.source_table) || matchedTableIds.has(relationship.target_table);
-  });
-
-  const relatedTableIds = new Set([...matchedTableIds]);
-  for (const relationship of relationships) {
-    relatedTableIds.add(relationship.source_table);
-    relatedTableIds.add(relationship.target_table);
-  }
-
-  return {
-    tables: (erd.tables || []).filter((table) => relatedTableIds.has(table.id)),
-    relationships,
-  };
+function filterErd(erd, filterText) {
+  if (!filterText) return erd;
+  const tables = (erd.tables || []).filter((table) => [table.id, table.label, table.schema, ...(table.columns || []).flatMap((column) => [column.name, column.data_type])].some((value) => String(value || "").toLowerCase().includes(filterText)));
+  const ids = new Set(tables.map((table) => table.id));
+  return { tables, relationships: (erd.relationships || []).filter((edge) => ids.has(edge.source_table) || ids.has(edge.target_table)) };
 }
 
 function filterDependencyGraph(graph, filterText) {
-  if (!filterText) {
-    return graph;
-  }
-  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
-  const edges = Array.isArray(graph.edges) ? graph.edges : [];
-  const directNodeIds = new Set(
-    nodes
-      .filter((node) => matchesFilter([node.id, node.label, node.schema, node.type], filterText))
-      .map((node) => node.id)
-  );
-  const filteredEdges = edges.filter(
-    (edge) =>
-      matchesFilter([edge.source, edge.target, edge.type], filterText) ||
-      directNodeIds.has(edge.source) ||
-      directNodeIds.has(edge.target)
-  );
-  const referencedNodeIds = new Set([...directNodeIds]);
-  for (const edge of filteredEdges) {
-    referencedNodeIds.add(edge.source);
-    referencedNodeIds.add(edge.target);
-  }
-  return {
-    nodes: nodes.filter((node) => referencedNodeIds.has(node.id)),
-    edges: filteredEdges,
-  };
+  if (!filterText) return graph;
+  const edges = (graph.edges || []).filter((edge) => [edge.source, edge.target].some((value) => String(value || "").toLowerCase().includes(filterText)));
+  const nodeIds = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
+  const nodes = (graph.nodes || []).filter((node) => nodeIds.has(node.id) || [node.id, node.label, node.schema, node.type].some((value) => String(value || "").toLowerCase().includes(filterText)));
+  return { nodes, edges };
 }
 
-function filterObjectDependencies(rows, filterText) {
-  if (!filterText) {
-    return rows;
-  }
-  return rows.filter((row) =>
-    matchesFilter(
-      [
-        row.object_id,
-        row.name,
-        row.schema,
-        row.object_type,
-        ...(Array.isArray(row.depends_on) ? row.depends_on : []),
-      ],
-      filterText
-    )
-  );
-}
-
-function renderJobs() {
-  if (!state.jobs.length) {
-    elements.jobsList.textContent = "No jobs yet.";
-    return;
-  }
-
-  elements.jobsList.innerHTML = state.jobs
-    .map((job) => {
-      const progress = Math.max(0, Math.min(100, Number(job.progress_percent) || 0));
-      const canDownload = job.status === "completed";
-      return `
-        <div class="job-row">
-          <button class="job-card job-open ${job.job_id === state.jobId ? "active" : ""}" type="button" data-job-id="${escapeHtml(job.job_id)}">
-            <span class="job-name">${escapeHtml(prettyJobName(job))}</span>
-            <div class="job-meta-row">
-              <span>${escapeHtml(humanizeStatus(job.status))}</span>
-              <span>${progress}%</span>
-            </div>
-            <div class="job-progress-mini"><span style="width:${progress}%"></span></div>
-          </button>
-          <div class="job-actions">
-            <button class="job-open-button" type="button" data-open-job="${escapeHtml(job.job_id)}">Open</button>
-            <a class="job-download ${canDownload ? "" : "disabled"}" href="${canDownload ? `/api/jobs/${encodeURIComponent(job.job_id)}/download` : "#"}" aria-disabled="${canDownload ? "false" : "true"}">Download</a>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
-
-  elements.jobsList.querySelectorAll("[data-job-id], [data-open-job]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const jobId = button.getAttribute("data-job-id") || button.getAttribute("data-open-job");
-      if (!jobId) {
-        return;
-      }
-      try {
-        const job = await requestJson(`/api/jobs/${jobId}`);
-        renderJob(job);
-      } catch (error) {
-        showError(error.message);
-      }
-    });
-  });
-}
-
-async function loadJobs() {
-  try {
-    const jobs = await requestJson("/api/jobs?limit=20");
-    state.jobs = jobs;
-    renderJobs();
-  } catch (error) {
-    elements.jobsList.textContent = error.message;
-  }
-}
-
-function enableOutputActions(job) {
-  elements.downloadLink.classList.remove("disabled");
-  elements.downloadLink.removeAttribute("aria-disabled");
-  elements.downloadLink.href = `/api/jobs/${job.job_id}/download`;
-  elements.downloadLink.textContent = archiveDownloadName(job);
-
-  elements.manifestLink.classList.remove("disabled");
-  elements.manifestLink.removeAttribute("aria-disabled");
-  elements.manifestLink.href = `/api/jobs/${job.job_id}/manifest`;
-
-  elements.manifestInlineLink.classList.remove("disabled");
-  elements.manifestInlineLink.removeAttribute("aria-disabled");
-  elements.manifestInlineLink.href = `/api/jobs/${job.job_id}/manifest`;
-}
-
-function renderExplorerPlaceholder(element, title) {
+function renderPlaceholder(element, text) {
   element.classList.add("empty-state");
-  element.innerHTML = `
-    <div class="empty-panel">
-      <div class="empty-graphic"></div>
-      <strong>${escapeHtml(title)}</strong>
-      <span>Start a split to view schemas, tables, views, and other database objects.</span>
-    </div>
-  `;
+  element.textContent = text;
+}
+
+function renderEmptyStates() {
+  renderPlaceholder(elements.navigatorWrap, "Run or open a completed job.");
+  renderPlaceholder(elements.treeWrap, "Output files will appear here.");
+  renderPlaceholder(elements.erdWrap, "ERD will appear here.");
+  renderPlaceholder(elements.dependencyWrap, "Dependency graph will appear here.");
 }
 
 function showError(message) {
   elements.message.textContent = message;
-  elements.message.classList.add("visible", "error");
+  elements.message.classList.add("visible");
 }
 
-function clearMessage() {
+function clearError() {
   elements.message.textContent = "";
-  elements.message.classList.remove("visible", "error");
+  elements.message.classList.remove("visible");
+}
+
+function isPinned(jobId) {
+  return state.pins.includes(jobId);
+}
+
+function togglePin(jobId) {
+  state.pins = isPinned(jobId) ? state.pins.filter((id) => id !== jobId) : [...state.pins, jobId];
+  localStorage.setItem(STORAGE.pins, JSON.stringify(state.pins));
+  renderJobs();
+}
+
+function sortJobs(a, b) {
+  if (state.jobSort === "created-asc") return String(a.created_at).localeCompare(String(b.created_at));
+  if (state.jobSort === "size-desc") return (b.file_size_bytes || 0) - (a.file_size_bytes || 0);
+  if (state.jobSort === "duration-desc") return (b.duration_seconds || 0) - (a.duration_seconds || 0);
+  return String(b.created_at).localeCompare(String(a.created_at));
 }
 
 function prettyJobName(job) {
-  const preferred = String(job.input_name || "").trim();
-  const fallback = String(job.source_path || job.job_id || "").trim();
-  const raw = preferred || fallback;
-  const leaf = raw.split(/[\\/]/).pop() || raw;
-  return leaf.replace(/^[0-9a-f]{32}_/i, "");
+  const raw = String(job.input_name || job.source_path || job.job_id || "");
+  return raw.split(/[\\/]/).pop() || raw;
 }
 
-function archiveDownloadName(job) {
-  const name = prettyJobName(job);
-  const stem = name.replace(/\.sql$/i, "") || "dump";
-  return `${stem}_split_output.zip`;
+function iconText(kind) {
+  const map = { schemas: "SCH", schema: "SCH", tables: "TBL", views: "VIEW", functions: "FN", triggers: "TRG", indexes: "IDX", sequences: "SEQ", constraints: "FK", data: "CPY", file: "SQL", directory: "DIR" };
+  return map[kind] || String(kind || "OBJ").slice(0, 4).toUpperCase();
 }
 
-function buildErdLayout(tables) {
-  const cardWidth = 320;
-  const rowHeight = 28;
-  const headerHeight = 38;
-  const footerGap = 14;
-  const gapX = 52;
-  const gapY = 44;
-  const padding = 24;
-  const columnCount = Math.max(1, Math.min(3, Math.ceil(Math.sqrt(Math.max(tables.length, 1)))));
-  const columnHeights = Array.from({ length: columnCount }, () => padding);
-  const placedTables = [];
-  const tableMap = {};
-
-  for (const table of tables) {
-    const height = headerHeight + Math.max(table.columns.length, 1) * rowHeight + footerGap;
-    let columnIndex = 0;
-    for (let index = 1; index < columnCount; index += 1) {
-      if (columnHeights[index] < columnHeights[columnIndex]) {
-        columnIndex = index;
-      }
-    }
-    const x = padding + columnIndex * (cardWidth + gapX);
-    const y = columnHeights[columnIndex];
-    columnHeights[columnIndex] += height + gapY;
-    const placed = { ...table, x, y, width: cardWidth, height, rowHeight, headerHeight };
-    placedTables.push(placed);
-    tableMap[table.id] = placed;
-  }
-
-  return {
-    tables: placedTables,
-    tableMap,
-    width: padding * 2 + columnCount * cardWidth + Math.max(columnCount - 1, 0) * gapX,
-    height: Math.max(...columnHeights, padding) + padding,
-  };
-}
-
-function shortObjectLabel(objectId) {
-  const value = String(objectId || "");
-  return value.length > 68 ? `${value.slice(0, 65)}...` : value;
+function highlightSql(sql) {
+  const escaped = escapeHtml(sql);
+  return escaped.replace(/\b(CREATE|TABLE|VIEW|FUNCTION|TRIGGER|ALTER|COPY|SELECT|FROM|WHERE|JOIN|PRIMARY|KEY|FOREIGN|REFERENCES|INSERT|UPDATE|DELETE|AS|BEGIN|END|LANGUAGE|CONSTRAINT|INDEX|SCHEMA)\b/g, '<span class="sql-keyword">$1</span>');
 }
 
 function formatBytes(value) {
   const bytes = Number(value) || 0;
-  if (bytes <= 0) {
-    return "-";
-  }
+  if (bytes <= 0) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
   let current = bytes;
-  let unitIndex = 0;
-  while (current >= 1024 && unitIndex < units.length - 1) {
+  let index = 0;
+  while (current >= 1024 && index < units.length - 1) {
     current /= 1024;
-    unitIndex += 1;
+    index += 1;
   }
-  return `${current.toFixed(current >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+  return `${current.toFixed(current >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
 function formatDate(value) {
-  if (!value) {
-    return "-";
-  }
+  if (!value) return "-";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-  return date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
 function formatDuration(value) {
-  if (value === null || value === undefined) {
-    return "-";
-  }
+  if (value === null || value === undefined) return "-";
   const seconds = Number(value);
-  if (!Number.isFinite(seconds)) {
-    return "-";
-  }
-  if (seconds < 60) {
-    return `${seconds.toFixed(1)} sec`;
-  }
+  if (!Number.isFinite(seconds)) return "-";
+  if (seconds < 60) return `${seconds.toFixed(1)} sec`;
   return `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} sec`;
 }
 
 function formatCount(value) {
   const number = Number(value);
-  if (!Number.isFinite(number)) {
-    return "-";
-  }
-  return number.toLocaleString();
+  return Number.isFinite(number) ? number.toLocaleString() : "-";
 }
 
 function humanizeStatus(status) {
-  const value = String(status || "queued").toLowerCase();
+  const value = String(status || "idle").toLowerCase();
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function matchesFilter(values, filterText) {
-  return values
-    .filter((value) => value !== null && value !== undefined)
-    .some((value) => String(value).toLowerCase().includes(filterText));
+function shortObjectLabel(value) {
+  const text = String(value || "");
+  return text.length > 72 ? `${text.slice(0, 69)}...` : text;
 }
 
-function normalizedFilterText() {
-  return String(state.filterText || "").trim().toLowerCase();
+function safeFilename(value) {
+  return String(value || "object").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "object";
 }
 
-function appendRelationship(collection, seen, relationship) {
-  if (!relationship.source_table || !relationship.target_table) {
-    return;
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function loadJson(key, fallback) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
+  } catch {
+    return fallback;
   }
-  const key = [
-    relationship.source_table,
-    ...(Array.isArray(relationship.source_columns) ? relationship.source_columns : []),
-    relationship.target_table,
-    ...(Array.isArray(relationship.target_columns) ? relationship.target_columns : []),
-  ].join("|");
-  if (seen.has(key)) {
-    return;
-  }
-  seen.add(key);
-  collection.push(relationship);
 }
 
-function iconForKind(kind) {
-  const icons = {
-    workspace: "wrk",
-    project: "prj",
-    connection: "db",
-    database: "db",
-    schemas: "sch",
-    schema: "sch",
-    tables: "tbl",
-    views: "viw",
-    functions: "fn",
-    sequences: "seq",
-    indexes: "idx",
-    triggers: "trg",
-    policies: "rls",
-    data: "cpy",
-    folder: "dir",
-    file: "sql",
-  };
-  return icons[kind] || "obj";
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function escapeHtml(value) {
-  const safe = String(value ?? "");
-  return safe.replace(/[&<>"']/g, (char) => {
-    const map = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#039;",
-    };
-    return map[char];
-  });
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
 }
 
-elements.modePath.addEventListener("click", () => setInputMode("path"));
-elements.modeUpload.addEventListener("click", () => setInputMode("upload"));
-elements.runSplitter.addEventListener("click", () => setRunMode("splitter"));
-elements.runVisualization.addEventListener("click", () => setRunMode("visualization"));
-elements.pathForm.addEventListener("submit", submitPath);
-elements.uploadForm.addEventListener("submit", submitUpload);
-elements.navigatorTab.addEventListener("click", () => setActiveView("navigator"));
-elements.filesTab.addEventListener("click", () => setActiveView("files"));
-elements.erdTab.addEventListener("click", () => setActiveView("erd"));
-elements.dependencyTab.addEventListener("click", () => setActiveView("dependency"));
-elements.objectDependencyTab.addEventListener("click", () => setActiveView("object-dependency"));
-elements.refreshJobs.addEventListener("click", loadJobs);
-elements.objectFilter.addEventListener("input", (event) => {
-  state.filterText = event.target.value || "";
-  renderAllViews();
-});
-
-renderExplorerPlaceholder(elements.navigatorWrap, "Project structure will appear here");
-renderExplorerPlaceholder(elements.treeWrap, "Output files will appear here");
-renderExplorerPlaceholder(elements.erdWrap, "ERD will appear here");
-renderExplorerPlaceholder(elements.dependencyWrap, "Dependency graph will appear here");
-renderExplorerPlaceholder(elements.objectDependencyWrap, "Object dependencies will appear here");
-loadJobs();
+initialize();

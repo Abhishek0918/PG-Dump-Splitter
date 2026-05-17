@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
@@ -13,6 +14,11 @@ from app.config import SplitterConfig
 from app.db import JobRecord, SQLiteStore
 from app.engine import DumpSplitterEngine
 from app.output_tree import build_output_tree, load_manifest_summary
+
+try:
+    import psutil
+except Exception:  # pragma: no cover - optional runtime metric
+    psutil = None
 
 
 class SplitterService:
@@ -77,16 +83,25 @@ class SplitterService:
             split_result = self.engine.split_dump(
                 source_path,
                 output_root,
-                progress_callback=lambda percent, stage, step, processed: self.store.update_progress(
+                progress_callback=lambda percent, stage, step, processed, objects: self.store.update_progress(
                     job_id,
                     percent,
                     stage,
                     step,
                     processed,
+                    objects_processed=objects,
+                    memory_bytes=self._memory_bytes(),
                 ),
             )
             self.store.replace_objects(job_id, split_result.objects)
-            self.store.update_progress(job_id, 96, "archiving", "Creating downloadable ZIP")
+            self.store.update_progress(
+                job_id,
+                96,
+                "archiving",
+                "Creating downloadable ZIP",
+                objects_processed=len(split_result.objects),
+                memory_bytes=self._memory_bytes(),
+            )
             archive_path = self._archive_output(output_root, job.input_name if job else None)
             self.store.mark_completed(
                 job_id=job_id,
@@ -111,6 +126,9 @@ class SplitterService:
 
     def list_objects(self, job_id: str, schema: str | None, object_type: str | None) -> list[dict]:
         return self.store.list_objects(job_id=job_id, schema=schema, object_type=object_type)
+
+    def list_events(self, job_id: str, limit: int = 200) -> list[dict]:
+        return [event.to_dict() for event in self.store.list_events(job_id=job_id, limit=limit)]
 
     def get_object(self, job_id: str, object_id: str) -> dict | None:
         return self.store.get_object(job_id=job_id, object_id=object_id)
@@ -174,3 +192,9 @@ class SplitterService:
         if not stem:
             stem = "dump"
         return f"{stem}_split_output"
+
+    @staticmethod
+    def _memory_bytes() -> int | None:
+        if psutil is None:
+            return None
+        return int(psutil.Process(os.getpid()).memory_info().rss)

@@ -47,6 +47,9 @@ class JobRecord:
     stage: str
     current_step: str
     duration_seconds: float | None
+    memory_bytes: int | None = None
+    objects_processed: int = 0
+    events_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +72,31 @@ class JobRecord:
             "stage": self.stage,
             "current_step": self.current_step,
             "duration_seconds": self.duration_seconds,
+            "memory_bytes": self.memory_bytes,
+            "objects_processed": self.objects_processed,
+            "events_count": self.events_count,
+        }
+
+
+@dataclass(slots=True)
+class JobEvent:
+    id: int
+    job_id: str
+    created_at: str
+    level: str
+    stage: str
+    message: str
+    metadata: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "created_at": self.created_at,
+            "level": self.level,
+            "stage": self.stage,
+            "message": self.message,
+            "metadata": self.metadata,
         }
 
 
@@ -105,7 +133,21 @@ class SQLiteStore:
             progress_percent REAL NOT NULL DEFAULT 0,
             stage TEXT NOT NULL DEFAULT 'queued',
             current_step TEXT NOT NULL DEFAULT 'Waiting to start',
-            duration_seconds REAL
+            duration_seconds REAL,
+            memory_bytes INTEGER,
+            objects_processed INTEGER NOT NULL DEFAULT 0,
+            events_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS job_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            level TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            message TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(job_id) REFERENCES jobs(job_id)
         );
 
         CREATE TABLE IF NOT EXISTS objects (
@@ -127,6 +169,7 @@ class SQLiteStore:
             connection.executescript(ddl)
             self._migrate_jobs_schema(connection)
             self._migrate_objects_schema(connection)
+            self._migrate_job_events_schema(connection)
             connection.commit()
 
     def _migrate_jobs_schema(self, connection: sqlite3.Connection) -> None:
@@ -141,6 +184,9 @@ class SQLiteStore:
             "stage": "TEXT NOT NULL DEFAULT 'queued'",
             "current_step": "TEXT NOT NULL DEFAULT 'Waiting to start'",
             "duration_seconds": "REAL",
+            "memory_bytes": "INTEGER",
+            "objects_processed": "INTEGER NOT NULL DEFAULT 0",
+            "events_count": "INTEGER NOT NULL DEFAULT 0",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -155,6 +201,22 @@ class SQLiteStore:
         for name, definition in columns.items():
             if name not in existing:
                 connection.execute(f"ALTER TABLE objects ADD COLUMN {name} {definition}")
+
+    def _migrate_job_events_schema(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                level TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                message TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(job_id) REFERENCES jobs(job_id)
+            )
+            """
+        )
 
     def create_job(
         self,
@@ -197,6 +259,14 @@ class SQLiteStore:
                     "Waiting to start",
                 ),
             )
+            self._insert_event(
+                connection,
+                job_id,
+                "info",
+                "queued",
+                "Job queued",
+                {"source_type": source_type, "input_name": input_name or Path(source_path).name},
+            )
             connection.commit()
 
     def mark_running(self, job_id: str) -> None:
@@ -209,6 +279,7 @@ class SQLiteStore:
                 """,
                 ("running", _utc_now(), 5, "parsing", "Preparing dump stream", job_id),
             )
+            self._insert_event(connection, job_id, "info", "parsing", "Preparing dump stream", {"percent": 5})
             connection.commit()
 
     def mark_failed(self, job_id: str, message: str) -> None:
@@ -223,6 +294,7 @@ class SQLiteStore:
                 """,
                 ("failed", finished_at, message, "failed", message, duration, job_id),
             )
+            self._insert_event(connection, job_id, "error", "failed", message, {"duration_seconds": duration})
             connection.commit()
 
     def mark_completed(
@@ -269,6 +341,14 @@ class SQLiteStore:
                     job_id,
                 ),
             )
+            self._insert_event(
+                connection,
+                job_id,
+                "success",
+                "completed",
+                "Completed",
+                {"object_count": object_count, "warning_count": warning_count, "duration_seconds": duration},
+            )
             connection.commit()
 
     def update_progress(
@@ -278,26 +358,44 @@ class SQLiteStore:
         stage: str,
         current_step: str,
         processed_bytes: int | None = None,
+        objects_processed: int | None = None,
+        memory_bytes: int | None = None,
     ) -> None:
         percent = min(max(percent, 0), 100)
         with self._lock, self._connect() as connection:
-            if processed_bytes is None:
-                connection.execute(
-                    """
-                    UPDATE jobs
-                    SET progress_percent = ?, stage = ?, current_step = ?
-                    WHERE job_id = ?
-                    """,
-                    (percent, stage, current_step, job_id),
-                )
-            else:
-                connection.execute(
-                    """
-                    UPDATE jobs
-                    SET progress_percent = ?, stage = ?, current_step = ?, processed_bytes = ?
-                    WHERE job_id = ?
-                    """,
-                    (percent, stage, current_step, max(processed_bytes, 0), job_id),
+            existing = connection.execute(
+                "SELECT progress_percent, stage, current_step FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            assignments = ["progress_percent = ?", "stage = ?", "current_step = ?"]
+            values: list[Any] = [percent, stage, current_step]
+            if processed_bytes is not None:
+                assignments.append("processed_bytes = ?")
+                values.append(max(processed_bytes, 0))
+            if objects_processed is not None:
+                assignments.append("objects_processed = ?")
+                values.append(max(objects_processed, 0))
+            if memory_bytes is not None:
+                assignments.append("memory_bytes = ?")
+                values.append(max(memory_bytes, 0))
+            values.append(job_id)
+            connection.execute(
+                f"UPDATE jobs SET {', '.join(assignments)} WHERE job_id = ?",
+                values,
+            )
+            if self._should_log_progress_event(existing, percent, stage, current_step):
+                self._insert_event(
+                    connection,
+                    job_id,
+                    "info",
+                    stage,
+                    current_step,
+                    {
+                        "percent": round(percent, 2),
+                        "processed_bytes": processed_bytes,
+                        "objects_processed": objects_processed,
+                        "memory_bytes": memory_bytes,
+                    },
                 )
             connection.commit()
 
@@ -337,6 +435,9 @@ class SQLiteStore:
             stage=row["stage"],
             current_step=row["current_step"],
             duration_seconds=row["duration_seconds"],
+            memory_bytes=row["memory_bytes"],
+            objects_processed=row["objects_processed"],
+            events_count=row["events_count"],
         )
 
     def replace_objects(self, job_id: str, objects: list[DumpObject]) -> None:
@@ -384,7 +485,8 @@ class SQLiteStore:
                     job_id, source_path, status, message, created_at, started_at, finished_at,
                     output_dir, archive_path, object_count, warning_count,
                     source_type, input_name, file_size_bytes, processed_bytes,
-                    progress_percent, stage, current_step, duration_seconds
+                    progress_percent, stage, current_step, duration_seconds,
+                    memory_bytes, objects_processed, events_count
                 FROM jobs
                 WHERE job_id = ?
                 """,
@@ -402,7 +504,8 @@ class SQLiteStore:
                     job_id, source_path, status, message, created_at, started_at, finished_at,
                     output_dir, archive_path, object_count, warning_count,
                     source_type, input_name, file_size_bytes, processed_bytes,
-                    progress_percent, stage, current_step, duration_seconds
+                    progress_percent, stage, current_step, duration_seconds,
+                    memory_bytes, objects_processed, events_count
                 FROM jobs
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -466,3 +569,69 @@ class SQLiteStore:
             "line_start": row["line_start"],
             "line_end": row["line_end"],
         }
+
+    def list_events(self, job_id: str, limit: int = 200) -> list[JobEvent]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, job_id, created_at, level, stage, message, metadata_json
+                FROM job_events
+                WHERE job_id = ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (job_id, limit),
+            ).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    def _insert_event(
+        self,
+        connection: sqlite3.Connection,
+        job_id: str,
+        level: str,
+        stage: str,
+        message: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO job_events (job_id, created_at, level, stage, message, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (job_id, _utc_now(), level, stage, message, json.dumps(metadata or {})),
+        )
+        connection.execute(
+            "UPDATE jobs SET events_count = events_count + 1 WHERE job_id = ?",
+            (job_id,),
+        )
+
+    def _should_log_progress_event(
+        self,
+        existing: sqlite3.Row | None,
+        percent: float,
+        stage: str,
+        current_step: str,
+    ) -> bool:
+        if existing is None:
+            return True
+        previous_percent = float(existing["progress_percent"] or 0)
+        previous_stage = str(existing["stage"] or "")
+        previous_step = str(existing["current_step"] or "")
+        if stage != previous_stage:
+            return True
+        if current_step == previous_step:
+            return False
+        if stage == "parsing":
+            return int(percent // 10) > int(previous_percent // 10)
+        return True
+
+    def _row_to_event(self, row: sqlite3.Row) -> JobEvent:
+        return JobEvent(
+            id=row["id"],
+            job_id=row["job_id"],
+            created_at=row["created_at"],
+            level=row["level"],
+            stage=row["stage"],
+            message=row["message"],
+            metadata=json.loads(row["metadata_json"] or "{}"),
+        )

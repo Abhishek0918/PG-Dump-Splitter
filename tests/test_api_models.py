@@ -21,3 +21,6 @@ def test_job_response_includes_progress_and_transaction_fields() -> None:
     assert payload["progress_percent"] == 50
     assert payload["source_type"] == "path"
     assert payload["current_step"] == "Parsed 10 SQL blocks"
+    assert payload["memory_bytes"] is None
+    assert payload["objects_processed"] == 0
+    assert payload["events_count"] == 0

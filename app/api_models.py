@@ -27,3 +27,16 @@ class JobResponse(BaseModel):
     stage: str = "queued"
     current_step: str = "Waiting to start"
     duration_seconds: float | None = None
+    memory_bytes: int | None = None
+    objects_processed: int = 0
+    events_count: int = 0
+
+
+class JobEventResponse(BaseModel):
+    id: int
+    job_id: str
+    created_at: str
+    level: str
+    stage: str
+    message: str
+    metadata: dict = Field(default_factory=dict)

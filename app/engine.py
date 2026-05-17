@@ -15,7 +15,7 @@ from app.writers.file_writer import SplitFileWriter
 from app.writers.folder_builder import FolderBuilder
 from app.writers.manifest_writer import ManifestWriter
 
-ProgressCallback = Callable[[float, str, str, int | None], None]
+ProgressCallback = Callable[[float, str, str, int | None, int | None], None]
 
 
 class DumpSplitterEngine:
@@ -59,9 +59,10 @@ class DumpSplitterEngine:
                     "parsing",
                     f"Parsed {index:,} SQL blocks",
                     min(processed_bytes, file_size),
+                    index,
                 )
 
-        self._emit_progress(progress_callback, 78, "analyzing", "Building dependency graph", min(processed_bytes, file_size))
+        self._emit_progress(progress_callback, 78, "analyzing", "Building dependency graph", min(processed_bytes, file_size), len(result.objects))
         topo_order = graph.topological_order()
         restore_plan = grouped_restore_order(result.objects, topo_order)
         fk_map = map_foreign_keys(result.objects)
@@ -69,7 +70,7 @@ class DumpSplitterEngine:
         catalog_payload = build_catalog_payload(result.objects, dump_path.stem)
         visualization_payload = build_visualization_payload(result.objects)
 
-        self._emit_progress(progress_callback, 86, "writing", "Writing manifest files", min(processed_bytes, file_size))
+        self._emit_progress(progress_callback, 86, "writing", "Writing manifest files", min(processed_bytes, file_size), len(result.objects))
         self.manifest_writer.write_objects(output_root, result.objects)
         self.manifest_writer.write_json(output_root, "dependency_graph.json", graph_payload)
         self.manifest_writer.write_json(output_root, "foreign_keys.json", fk_map)
@@ -81,10 +82,10 @@ class DumpSplitterEngine:
         self.manifest_writer.write_statistics(output_root, result.objects, result.warnings)
         self.manifest_writer.write_summary(output_root, result.objects, graph.edge_count(), len(restore_plan))
         if self.config.write_combined_restore:
-            self._emit_progress(progress_callback, 91, "writing", "Writing combined restore file", min(processed_bytes, file_size))
+            self._emit_progress(progress_callback, 91, "writing", "Writing combined restore file", min(processed_bytes, file_size), len(result.objects))
             self._write_combined_restore(output_root, restore_plan, result.objects)
 
-        self._emit_progress(progress_callback, 94, "writing", "Split output written", min(processed_bytes, file_size))
+        self._emit_progress(progress_callback, 94, "writing", "Split output written", min(processed_bytes, file_size), len(result.objects))
         result.statistics = {
             "objects": len(result.objects),
             "dependencies": graph.edge_count(),
@@ -117,7 +118,8 @@ class DumpSplitterEngine:
         stage: str,
         current_step: str,
         processed_bytes: int | None = None,
+        objects_processed: int | None = None,
     ) -> None:
         if progress_callback is None:
             return
-        progress_callback(percent, stage, current_step, processed_bytes)
+        progress_callback(percent, stage, current_step, processed_bytes, objects_processed)
