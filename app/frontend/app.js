@@ -19,6 +19,16 @@ const state = {
   selectedSql: "",
   sourceBlobUrl: null,
   filterText: "",
+  globalSearch: "",
+  searchResults: [],
+  searchFacets: null,
+  searchTimer: null,
+  commandOpen: false,
+  commandQuery: "",
+  commandResults: [],
+  commandItems: [],
+  commandIndex: 0,
+  commandTimer: null,
   jobFilter: "",
   jobStatusFilter: "all",
   jobSort: "created-desc",
@@ -36,6 +46,8 @@ const elements = {
   refreshJobs: document.getElementById("refresh-jobs"),
   manifestLink: document.getElementById("manifest-link"),
   downloadLink: document.getElementById("download-link"),
+  globalSearch: document.getElementById("global-search"),
+  commandOpen: document.getElementById("command-open"),
   modePath: document.getElementById("mode-path"),
   modeUpload: document.getElementById("mode-upload"),
   pathForm: document.getElementById("path-form"),
@@ -57,6 +69,7 @@ const elements = {
   erdTab: document.getElementById("erd-tab"),
   dependencyTab: document.getElementById("dependency-tab"),
   sqlTab: document.getElementById("sql-tab"),
+  breadcrumbBar: document.getElementById("breadcrumb-bar"),
   overviewView: document.getElementById("overview-view"),
   filesView: document.getElementById("files-view"),
   erdView: document.getElementById("erd-view"),
@@ -66,6 +79,11 @@ const elements = {
   erdWrap: document.getElementById("erd-wrap"),
   dependencyWrap: document.getElementById("dependency-wrap"),
   message: document.getElementById("message"),
+  searchResultsPanel: document.getElementById("search-results-panel"),
+  searchSummary: document.getElementById("search-summary"),
+  searchFacets: document.getElementById("search-facets"),
+  searchResults: document.getElementById("search-results"),
+  clearSearch: document.getElementById("clear-search"),
   jobFilter: document.getElementById("job-filter"),
   jobStatusFilter: document.getElementById("job-status-filter"),
   jobSort: document.getElementById("job-sort"),
@@ -74,7 +92,12 @@ const elements = {
   sqlSearch: document.getElementById("sql-search"),
   copySql: document.getElementById("copy-sql"),
   sourceDownload: document.getElementById("source-download"),
+  sqlMeta: document.getElementById("sql-meta"),
   sqlPreview: document.getElementById("sql-preview"),
+  commandOverlay: document.getElementById("command-overlay"),
+  commandInput: document.getElementById("command-input"),
+  commandClose: document.getElementById("command-close"),
+  commandList: document.getElementById("command-list"),
   consoleStage: document.getElementById("console-stage"),
   consoleThroughput: document.getElementById("console-throughput"),
   consoleEta: document.getElementById("console-eta"),
@@ -135,6 +158,26 @@ function bindEvents() {
   elements.pathForm.addEventListener("submit", submitPath);
   elements.uploadForm.addEventListener("submit", submitUpload);
   elements.refreshJobs.addEventListener("click", loadJobs);
+  elements.globalSearch.addEventListener("input", (event) => {
+    state.globalSearch = event.target.value.trim();
+    if (state.globalSearch) setActiveView("overview");
+    queueObjectSearch(state.globalSearch);
+  });
+  elements.globalSearch.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && state.searchResults[0]) selectObject(state.searchResults[0].object_id);
+  });
+  elements.commandOpen.addEventListener("click", () => openCommandPalette());
+  elements.commandClose.addEventListener("click", closeCommandPalette);
+  elements.commandOverlay.addEventListener("click", (event) => {
+    if (event.target === elements.commandOverlay) closeCommandPalette();
+  });
+  elements.commandInput.addEventListener("input", () => {
+    state.commandQuery = elements.commandInput.value.trim();
+    renderCommandPalette();
+    queueCommandObjectSearch(state.commandQuery);
+  });
+  elements.commandInput.addEventListener("keydown", handleCommandKeydown);
+  elements.clearSearch.addEventListener("click", clearObjectSearch);
   elements.collapseLeft.addEventListener("click", () => togglePane("left"));
   elements.collapseRight.addEventListener("click", () => togglePane("right"));
   elements.objectFilter.addEventListener("input", (event) => {
@@ -163,6 +206,7 @@ function bindEvents() {
   });
   elements.sqlSearch.addEventListener("input", renderSqlPreview);
   elements.copySql.addEventListener("click", copySql);
+  window.addEventListener("keydown", handleGlobalKeydown);
   bindTab(elements.overviewTab, "overview");
   bindTab(elements.filesTab, "files");
   bindTab(elements.erdTab, "erd");
@@ -250,6 +294,7 @@ function setActiveView(view) {
     tab.classList.toggle("active", key === view);
     panel.classList.toggle("active", key === view);
   }
+  renderBreadcrumb();
 }
 
 function setBusy(isBusy) {
@@ -341,6 +386,7 @@ function renderJob(job) {
   renderProgressMetrics(job);
   updateLinks(job);
   elements.activeJobLabel.textContent = `${prettyJobName(job)} | ${humanizeStatus(job.status)}`;
+  renderBreadcrumb();
   loadJobs(false);
   if (job.status === "completed") {
     setBusy(false);
@@ -373,6 +419,235 @@ async function loadJobs(renderFirst = true) {
   } catch (error) {
     showError(error.message);
   }
+}
+
+function queueObjectSearch(query, delay = 220) {
+  window.clearTimeout(state.searchTimer);
+  state.searchTimer = window.setTimeout(() => performObjectSearch(query), delay);
+}
+
+async function performObjectSearch(query) {
+  if (!state.jobId || !state.activeJob || state.activeJob.status !== "completed") {
+    state.searchResults = [];
+    state.searchFacets = null;
+    renderSearchResults();
+    return;
+  }
+  const normalized = String(query || "").trim();
+  if (!normalized) {
+    state.searchResults = [];
+    renderSearchResults();
+    return;
+  }
+  renderSearchLoading(normalized);
+  try {
+    const payload = await requestJson(`/api/jobs/${state.jobId}/search?q=${encodeURIComponent(normalized)}&limit=80`);
+    if (state.globalSearch !== normalized && elements.commandInput.value.trim() !== normalized) return;
+    state.searchResults = payload.items || [];
+    state.searchFacets = payload.facets || null;
+    renderSearchResults(normalized);
+    if (state.commandOpen && state.commandQuery === normalized) renderCommandPalette();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function clearObjectSearch() {
+  state.globalSearch = "";
+  state.searchResults = [];
+  elements.globalSearch.value = "";
+  elements.objectFilter.value = "";
+  state.filterText = "";
+  renderSearchResults();
+  renderAllViews();
+}
+
+function renderSearchLoading(query) {
+  elements.searchResultsPanel.classList.remove("hidden");
+  elements.searchSummary.textContent = `Searching for "${query}"...`;
+  elements.searchFacets.innerHTML = "";
+  renderSkeleton(elements.searchResults, 4);
+}
+
+function renderSearchResults(query = state.globalSearch) {
+  const hasQuery = Boolean(String(query || "").trim());
+  if (!hasQuery) {
+    elements.searchResultsPanel.classList.add("hidden");
+    elements.searchSummary.textContent = "Search completed objects from the toolbar or Ctrl+K.";
+    elements.searchResults.innerHTML = "";
+    elements.searchFacets.innerHTML = "";
+    return;
+  }
+  elements.searchResultsPanel.classList.remove("hidden");
+  elements.searchSummary.textContent = `${state.searchResults.length.toLocaleString()} matches for "${query}"`;
+  elements.searchFacets.innerHTML = renderFacetChips(state.searchFacets?.by_type || {});
+  if (!state.searchResults.length) {
+    elements.searchResults.innerHTML = '<div class="command-empty">No matching objects found.</div>';
+    return;
+  }
+  elements.searchResults.innerHTML = state.searchResults.map((object) => renderSearchResult(object)).join("");
+  elements.searchResults.querySelectorAll("[data-search-object]").forEach((button) => {
+    button.addEventListener("click", () => selectObject(button.dataset.searchObject));
+  });
+}
+
+function renderSearchResult(object) {
+  return `
+    <button class="search-result" type="button" data-search-object="${escapeHtml(object.object_id)}">
+      <span class="tree-icon icon-${escapeHtml(object.object_type)}">${escapeHtml(iconText(object.object_type))}</span>
+      <span>
+        <span class="result-title">${escapeHtml(formatObjectLabel(object))}</span>
+        <span class="result-path">${escapeHtml(object.path || object.object_id || "")}</span>
+      </span>
+      <span class="tree-tag">${escapeHtml(object.object_type)}</span>
+    </button>
+  `;
+}
+
+function renderFacetChips(facets) {
+  const entries = Object.entries(facets || {}).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  return entries.map(([type, count]) => `<span class="facet-chip">${escapeHtml(type)} ${formatCount(count)}</span>`).join("");
+}
+
+function handleGlobalKeydown(event) {
+  const isCommandShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
+  if (isCommandShortcut) {
+    event.preventDefault();
+    openCommandPalette(state.globalSearch || "");
+  }
+  if (event.key === "Escape" && state.commandOpen) {
+    event.preventDefault();
+    closeCommandPalette();
+  }
+}
+
+function openCommandPalette(seed = "") {
+  state.commandOpen = true;
+  state.commandQuery = seed;
+  state.commandIndex = 0;
+  if (!seed) state.commandResults = [];
+  elements.commandOverlay.classList.remove("hidden");
+  elements.commandInput.value = seed;
+  renderCommandPalette();
+  queueCommandObjectSearch(seed);
+  window.setTimeout(() => elements.commandInput.focus(), 0);
+}
+
+function closeCommandPalette() {
+  state.commandOpen = false;
+  elements.commandOverlay.classList.add("hidden");
+}
+
+function queueCommandObjectSearch(query) {
+  window.clearTimeout(state.commandTimer);
+  if (!String(query || "").trim()) {
+    state.commandResults = [];
+    renderCommandPalette();
+    return;
+  }
+  state.commandTimer = window.setTimeout(() => performCommandObjectSearch(query), 180);
+}
+
+async function performCommandObjectSearch(query) {
+  const normalized = String(query || "").trim();
+  if (!state.jobId || !normalized || state.activeJob?.status !== "completed") {
+    state.commandResults = [];
+    renderCommandPalette();
+    return;
+  }
+  try {
+    const payload = await requestJson(`/api/jobs/${state.jobId}/search?q=${encodeURIComponent(normalized)}&limit=12`);
+    if (state.commandQuery !== normalized) return;
+    state.commandResults = payload.items || [];
+    renderCommandPalette();
+  } catch {
+    state.commandResults = [];
+    renderCommandPalette();
+  }
+}
+
+function handleCommandKeydown(event) {
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    state.commandIndex = Math.min(state.commandIndex + 1, Math.max(state.commandItems.length - 1, 0));
+    renderCommandPalette();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    state.commandIndex = Math.max(state.commandIndex - 1, 0);
+    renderCommandPalette();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    executeCommand(state.commandItems[state.commandIndex]);
+  }
+}
+
+function renderCommandPalette() {
+  if (!state.commandOpen) return;
+  const query = state.commandQuery.toLowerCase();
+  const commands = buildCommandItems();
+  const objectItems = state.commandResults.map((object) => ({
+    kind: "object",
+    title: formatObjectLabel(object),
+    meta: object.path || object.object_id,
+    badge: object.object_type,
+    object,
+  }));
+  state.commandItems = [...commands, ...objectItems].filter((item) => {
+    if (!query || item.kind === "object") return true;
+    return [item.title, item.meta, item.badge].some((value) => String(value || "").toLowerCase().includes(query));
+  });
+  if (state.commandIndex >= state.commandItems.length) state.commandIndex = Math.max(state.commandItems.length - 1, 0);
+  if (!state.commandItems.length) {
+    elements.commandList.innerHTML = '<div class="command-empty">No commands or objects found.</div>';
+    return;
+  }
+  elements.commandList.innerHTML = state.commandItems.map((item, index) => renderCommandItem(item, index)).join("");
+  elements.commandList.querySelectorAll("[data-command-index]").forEach((button) => {
+    button.addEventListener("click", () => executeCommand(state.commandItems[Number(button.dataset.commandIndex)]));
+  });
+}
+
+function buildCommandItems() {
+  const completed = state.activeJob?.status === "completed";
+  return [
+    { kind: "command", title: "Focus global search", meta: "Search objects, schemas, and file paths", badge: "Search", action: () => elements.globalSearch.focus() },
+    { kind: "command", title: "Open Overview", meta: "Show metrics and job history", badge: "View", action: () => setActiveView("overview") },
+    { kind: "command", title: "Open Output Files", meta: "Browse generated split folder", badge: "View", action: () => setActiveView("files") },
+    { kind: "command", title: "Open ERD", meta: "Show parsed table relationships", badge: "View", action: () => setActiveView("erd") },
+    { kind: "command", title: "Open Dependency Graph", meta: "Show dependency edges", badge: "View", action: () => setActiveView("dependency") },
+    { kind: "command", title: "Open SQL Preview", meta: "Inspect selected object source", badge: "View", action: () => setActiveView("sql") },
+    { kind: "command", title: "Switch to Dark Theme", meta: "Database-tool friendly dark mode", badge: "Theme", action: () => applyTheme("dark") },
+    { kind: "command", title: "Switch to Light Theme", meta: "Use the light workspace theme", badge: "Theme", action: () => applyTheme("light") },
+    { kind: "command", title: "Use System Theme", meta: "Follow OS theme preference", badge: "Theme", action: () => applyTheme("system") },
+    { kind: "command", title: "Download ZIP", meta: completed ? "Download split output archive" : "Available after completion", badge: "Job", disabled: !completed, action: () => window.location.assign(elements.downloadLink.href) },
+    { kind: "command", title: "Open Manifest", meta: completed ? "Open generated manifest JSON" : "Available after completion", badge: "Job", disabled: !completed, action: () => window.open(elements.manifestLink.href, "_blank", "noopener") },
+  ];
+}
+
+function renderCommandItem(item, index) {
+  const active = index === state.commandIndex ? "active" : "";
+  const disabled = item.disabled ? "disabled" : "";
+  const icon = item.kind === "object" ? iconText(item.object?.object_type) : item.badge;
+  return `
+    <button class="command-item ${active} ${disabled}" type="button" data-command-index="${index}" ${item.disabled ? "disabled" : ""}>
+      <span class="tree-icon icon-${escapeHtml(item.object?.object_type || "command")}">${escapeHtml(icon)}</span>
+      <span>
+        <span class="result-title">${escapeHtml(item.title)}</span>
+        <span class="result-path">${escapeHtml(item.meta || "")}</span>
+      </span>
+      <span class="command-kicker">${escapeHtml(item.badge || item.kind)}</span>
+    </button>
+  `;
+}
+
+function executeCommand(item) {
+  if (!item || item.disabled) return;
+  closeCommandPalette();
+  if (item.kind === "object") {
+    selectObject(item.object.object_id);
+    return;
+  }
+  item.action?.();
 }
 
 function renderJobs() {
@@ -436,10 +711,10 @@ async function openJob(jobId) {
 }
 
 async function loadJobArtifacts(jobId) {
-  renderPlaceholder(elements.navigatorWrap, "Loading objects...");
-  renderPlaceholder(elements.treeWrap, "Loading files...");
-  renderPlaceholder(elements.erdWrap, "Loading ERD...");
-  renderPlaceholder(elements.dependencyWrap, "Loading dependencies...");
+  renderSkeleton(elements.navigatorWrap, 8);
+  renderSkeleton(elements.treeWrap, 9);
+  renderSkeleton(elements.erdWrap, 6);
+  renderSkeleton(elements.dependencyWrap, 7);
   try {
     const [treePayload, visualizationPayload] = await Promise.all([
       requestJson(`/api/jobs/${jobId}/tree`),
@@ -449,6 +724,7 @@ async function loadJobArtifacts(jobId) {
     state.outputTree = treePayload.tree || null;
     state.visualization = visualizationPayload;
     renderAllViews();
+    if (state.globalSearch) queueObjectSearch(state.globalSearch, 0);
   } catch (error) {
     showError(error.message);
   }
@@ -477,6 +753,8 @@ function renderAllViews() {
   renderFiles();
   renderErd();
   renderDependencyGraph();
+  renderSearchResults();
+  renderBreadcrumb();
 }
 
 function renderNavigator() {
@@ -571,6 +849,7 @@ async function selectObject(objectId) {
     const object = await requestJson(`/api/jobs/${state.jobId}/object?object_id=${encodeURIComponent(objectId)}`);
     state.selectedObject = object;
     renderObjectDetails(object);
+    renderBreadcrumb();
     await loadSqlPreview(objectId);
     setActiveView("sql");
     renderNavigator();
@@ -590,9 +869,11 @@ async function loadSqlPreview(objectId) {
     elements.sourceDownload.download = `${safeFilename(state.selectedObject?.name || "object")}.sql`;
     elements.sourceDownload.classList.remove("disabled");
     elements.sourceDownload.removeAttribute("aria-disabled");
+    renderSqlMeta(payload.path);
     renderSqlPreview();
   } catch (error) {
     state.selectedSql = `-- ${error.message}`;
+    renderSqlMeta(null);
     renderSqlPreview();
   }
 }
@@ -600,16 +881,27 @@ async function loadSqlPreview(objectId) {
 function renderSqlPreview() {
   const query = elements.sqlSearch.value.trim();
   let html = highlightSql(state.selectedSql || "Select an object to preview SQL.");
+  let hitCount = 0;
   if (query) {
     const escaped = escapeRegExp(escapeHtml(query));
-    html = html.replace(new RegExp(escaped, "gi"), (match) => `<mark class="sql-hit">${match}</mark>`);
+    html = html.replace(new RegExp(escaped, "gi"), (match) => {
+      hitCount += 1;
+      return `<mark class="sql-hit">${match}</mark>`;
+    });
   }
   elements.sqlPreview.innerHTML = `<code>${html}</code>`;
+  if (query) elements.sqlMeta.textContent = `${hitCount} SQL matches | ${sqlSizeLabel()}`;
+  else renderSqlMeta(state.selectedObject?.path || null);
 }
 
 async function copySql() {
   if (!state.selectedSql) return;
   await navigator.clipboard.writeText(state.selectedSql);
+  const original = elements.copySql.textContent;
+  elements.copySql.textContent = "Copied";
+  window.setTimeout(() => {
+    elements.copySql.textContent = original;
+  }, 900);
 }
 
 function renderJobDetails(job) {
@@ -631,6 +923,36 @@ function renderObjectDetails(object) {
   elements.details.objectSchema.textContent = object.schema || "-";
   elements.details.objectPath.textContent = object.path || "-";
   elements.details.objectDependencies.textContent = (object.dependencies || []).join(", ") || "-";
+}
+
+function renderBreadcrumb() {
+  const parts = ["Workspace"];
+  if (state.activeJob) parts.push(prettyJobName(state.activeJob));
+  parts.push(viewTitle(state.activeView));
+  if (state.selectedObject) {
+    if (state.selectedObject.schema) parts.push(state.selectedObject.schema);
+    parts.push(state.selectedObject.object_type || "object");
+    parts.push(state.selectedObject.name || state.selectedObject.object_id);
+  }
+  elements.breadcrumbBar.innerHTML = parts.map((part, index) => {
+    const label = escapeHtml(part);
+    if (index === 0) return `<span>${label}</span>`;
+    return `<span class="breadcrumb-separator">/</span><span class="${index === parts.length - 1 ? "breadcrumb-part" : ""}">${label}</span>`;
+  }).join("");
+}
+
+function renderSqlMeta(path) {
+  const object = state.selectedObject;
+  if (!object) {
+    elements.sqlMeta.textContent = "No source selected";
+    return;
+  }
+  const lines = [object.object_type, object.schema || "_global", path || object.path, sqlSizeLabel()].filter(Boolean);
+  elements.sqlMeta.textContent = lines.join(" | ");
+}
+
+function sqlSizeLabel() {
+  return `${formatCount((state.selectedSql || "").split(/\r?\n/).length)} lines`;
 }
 
 function renderProgressMetrics(job) {
@@ -808,6 +1130,15 @@ function renderPlaceholder(element, text) {
   element.textContent = text;
 }
 
+function renderSkeleton(element, lines = 6) {
+  element.classList.remove("empty-state");
+  element.innerHTML = `
+    <div class="skeleton" aria-label="Loading">
+      ${Array.from({ length: lines }, (_, index) => `<div class="skeleton-line" style="width:${Math.max(34, 96 - index * 7)}%"></div>`).join("")}
+    </div>
+  `;
+}
+
 function renderEmptyStates() {
   renderPlaceholder(elements.navigatorWrap, "Run or open a completed job.");
   renderPlaceholder(elements.treeWrap, "Output files will appear here.");
@@ -847,14 +1178,30 @@ function prettyJobName(job) {
   return raw.split(/[\\/]/).pop() || raw;
 }
 
+function formatObjectLabel(object) {
+  if (!object) return "-";
+  return object.schema ? `${object.schema}.${object.name}` : object.name || object.object_id;
+}
+
+function viewTitle(view) {
+  const map = {
+    overview: "Overview",
+    files: "Output Files",
+    erd: "ERD",
+    dependency: "Dependency Graph",
+    sql: "SQL Preview",
+  };
+  return map[view] || "Overview";
+}
+
 function iconText(kind) {
-  const map = { schemas: "SCH", schema: "SCH", tables: "TBL", views: "VIEW", functions: "FN", triggers: "TRG", indexes: "IDX", sequences: "SEQ", constraints: "FK", data: "CPY", file: "SQL", directory: "DIR" };
+  const map = { schemas: "SCH", schema: "SCH", tables: "TBL", views: "VIEW", materialized_views: "MV", functions: "FN", triggers: "TRG", indexes: "IDX", sequences: "SEQ", constraints: "FK", enums: "ENUM", types: "TYPE", policies: "RLS", grants: "GRANT", comments: "NOTE", data: "CPY", manifest: "JSON", file: "SQL", directory: "DIR", command: "CMD" };
   return map[kind] || String(kind || "OBJ").slice(0, 4).toUpperCase();
 }
 
 function highlightSql(sql) {
   const escaped = escapeHtml(sql);
-  return escaped.replace(/\b(CREATE|TABLE|VIEW|FUNCTION|TRIGGER|ALTER|COPY|SELECT|FROM|WHERE|JOIN|PRIMARY|KEY|FOREIGN|REFERENCES|INSERT|UPDATE|DELETE|AS|BEGIN|END|LANGUAGE|CONSTRAINT|INDEX|SCHEMA)\b/g, '<span class="sql-keyword">$1</span>');
+  return escaped.replace(/\b(CREATE|TABLE|VIEW|FUNCTION|TRIGGER|ALTER|COPY|SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|PRIMARY|KEY|FOREIGN|REFERENCES|INSERT|UPDATE|DELETE|AS|BEGIN|END|LANGUAGE|CONSTRAINT|INDEX|SCHEMA|POLICY|GRANT|OWNER|SEQUENCE|TYPE|ENUM|EXTENSION|MATERIALIZED)\b/gi, '<span class="sql-keyword">$1</span>');
 }
 
 function formatBytes(value) {

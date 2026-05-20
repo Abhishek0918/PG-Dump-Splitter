@@ -170,6 +170,7 @@ class SQLiteStore:
             self._migrate_jobs_schema(connection)
             self._migrate_objects_schema(connection)
             self._migrate_job_events_schema(connection)
+            self._create_indexes(connection)
             connection.commit()
 
     def _migrate_jobs_schema(self, connection: sqlite3.Connection) -> None:
@@ -215,6 +216,18 @@ class SQLiteStore:
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 FOREIGN KEY(job_id) REFERENCES jobs(job_id)
             )
+            """
+        )
+
+    def _create_indexes(self, connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_objects_job_id ON objects(job_id);
+            CREATE INDEX IF NOT EXISTS idx_objects_job_type ON objects(job_id, object_type);
+            CREATE INDEX IF NOT EXISTS idx_objects_job_schema ON objects(job_id, schema_name);
+            CREATE INDEX IF NOT EXISTS idx_objects_job_name ON objects(job_id, object_name);
+            CREATE INDEX IF NOT EXISTS idx_objects_job_path ON objects(job_id, file_path);
+            CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id, id);
             """
         )
 
@@ -531,20 +544,89 @@ class SQLiteStore:
 
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
-        return [
-            {
-                "object_id": row["object_id"],
-                "object_type": row["object_type"],
-                "schema": row["schema_name"],
-                "name": row["object_name"],
-                "path": row["file_path"],
-                "dependencies": json.loads(row["dependencies_json"]),
-                "attributes": json.loads(row["attributes_json"] or "{}"),
-                "line_start": row["line_start"],
-                "line_end": row["line_end"],
-            }
-            for row in rows
-        ]
+        return [self._row_to_object(row) for row in rows]
+
+    def search_objects(
+        self,
+        job_id: str,
+        query_text: str | None = None,
+        object_type: str | None = None,
+        schema: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT object_id, object_type, schema_name, object_name, file_path, dependencies_json, attributes_json, line_start, line_end
+            FROM objects
+            WHERE job_id = ?
+        """
+        params: list[Any] = [job_id]
+        if object_type and object_type != "all":
+            query += " AND object_type = ?"
+            params.append(object_type)
+        if schema and schema != "all":
+            query += " AND schema_name = ?"
+            params.append(schema)
+        if query_text:
+            like = self._like_pattern(query_text)
+            query += """
+                AND (
+                    LOWER(object_id) LIKE ? ESCAPE '\\'
+                    OR LOWER(object_type) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(schema_name, '')) LIKE ? ESCAPE '\\'
+                    OR LOWER(object_name) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(file_path, '')) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(dependencies_json, '')) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(attributes_json, '')) LIKE ? ESCAPE '\\'
+                )
+            """
+            params.extend([like] * 7)
+        query += """
+            ORDER BY
+                CASE object_type
+                    WHEN 'schemas' THEN 0
+                    WHEN 'tables' THEN 1
+                    WHEN 'views' THEN 2
+                    WHEN 'materialized_views' THEN 3
+                    WHEN 'functions' THEN 4
+                    WHEN 'triggers' THEN 5
+                    WHEN 'indexes' THEN 6
+                    ELSE 7
+                END,
+                schema_name,
+                object_name
+            LIMIT ?
+        """
+        params.append(max(1, min(limit, 500)))
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._row_to_object(row) for row in rows]
+
+    def object_facets(self, job_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            type_rows = connection.execute(
+                """
+                SELECT object_type, COUNT(*) AS total
+                FROM objects
+                WHERE job_id = ?
+                GROUP BY object_type
+                ORDER BY object_type
+                """,
+                (job_id,),
+            ).fetchall()
+            schema_rows = connection.execute(
+                """
+                SELECT COALESCE(schema_name, '_global') AS schema_name, COUNT(*) AS total
+                FROM objects
+                WHERE job_id = ?
+                GROUP BY COALESCE(schema_name, '_global')
+                ORDER BY schema_name
+                """,
+                (job_id,),
+            ).fetchall()
+        return {
+            "by_type": {row["object_type"]: int(row["total"]) for row in type_rows},
+            "by_schema": {row["schema_name"]: int(row["total"]) for row in schema_rows},
+        }
 
     def get_object(self, job_id: str, object_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -558,6 +640,9 @@ class SQLiteStore:
             ).fetchone()
         if row is None:
             return None
+        return self._row_to_object(row)
+
+    def _row_to_object(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
             "object_id": row["object_id"],
             "object_type": row["object_type"],
@@ -569,6 +654,11 @@ class SQLiteStore:
             "line_start": row["line_start"],
             "line_end": row["line_end"],
         }
+
+    @staticmethod
+    def _like_pattern(value: str) -> str:
+        escaped = value.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"%{escaped}%"
 
     def list_events(self, job_id: str, limit: int = 200) -> list[JobEvent]:
         with self._connect() as connection:

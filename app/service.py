@@ -127,6 +127,25 @@ class SplitterService:
     def list_objects(self, job_id: str, schema: str | None, object_type: str | None) -> list[dict]:
         return self.store.list_objects(job_id=job_id, schema=schema, object_type=object_type)
 
+    def search_objects(
+        self,
+        job_id: str,
+        query_text: str | None,
+        schema: str | None,
+        object_type: str | None,
+        limit: int,
+    ) -> dict:
+        return {
+            "items": self.store.search_objects(
+                job_id=job_id,
+                query_text=query_text,
+                schema=schema,
+                object_type=object_type,
+                limit=limit,
+            ),
+            "facets": self.store.object_facets(job_id),
+        }
+
     def list_events(self, job_id: str, limit: int = 200) -> list[dict]:
         return [event.to_dict() for event in self.store.list_events(job_id=job_id, limit=limit)]
 

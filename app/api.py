@@ -69,6 +69,33 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         objects = service.list_objects(job_id, schema=schema, object_type=object_type)
         return {"job_id": job_id, "count": len(objects), "items": objects}
 
+    @app.get("/api/jobs/{job_id}/search")
+    def search_job_objects(
+        job_id: str,
+        q: str | None = Query(default=None, max_length=200),
+        schema: str | None = Query(default=None),
+        object_type: str | None = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, object]:
+        job = service.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        payload = service.search_objects(
+            job_id=job_id,
+            query_text=(q or "").strip() or None,
+            schema=schema,
+            object_type=object_type,
+            limit=limit,
+        )
+        items = payload["items"]
+        return {
+            "job_id": job_id,
+            "query": q or "",
+            "count": len(items),
+            "items": items,
+            "facets": payload["facets"],
+        }
+
     @app.get("/api/jobs/{job_id}/events", response_model=list[JobEventResponse])
     def get_job_events(job_id: str, limit: int = Query(default=200, ge=1, le=500)) -> list[JobEventResponse]:
         job = service.get_job(job_id)

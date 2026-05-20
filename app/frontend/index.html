@@ -18,6 +18,10 @@
       </div>
 
       <div class="toolbar-center">
+        <div class="command-search">
+          <input id="global-search" type="search" placeholder="Search objects, paths, schemas... (Ctrl+K)" />
+          <button id="command-open" type="button" class="tool-button shortcut-button">Ctrl+K</button>
+        </div>
         <div class="global-progress">
           <span id="status-label" class="status-pill idle">Idle</span>
           <div class="progress-track">
@@ -84,9 +88,21 @@
           <button id="sql-tab" class="workbench-tab" type="button">SQL Preview</button>
         </nav>
 
+        <div id="breadcrumb-bar" class="breadcrumb-bar">Workspace / Overview</div>
         <section id="message" class="message"></section>
 
         <div id="overview-view" class="workbench-view active">
+          <section id="search-results-panel" class="search-results-panel hidden">
+            <div class="panel-title">
+              <div>
+                <h3>Search Results</h3>
+                <p id="search-summary">Search completed objects from the toolbar or Ctrl+K.</p>
+              </div>
+              <button id="clear-search" type="button" class="tool-button">Clear</button>
+            </div>
+            <div id="search-facets" class="facet-row"></div>
+            <div id="search-results" class="search-results"></div>
+          </section>
           <div class="overview-grid">
             <article class="metric-card"><span>Objects</span><strong id="metric-objects">-</strong></article>
             <article class="metric-card"><span>Processed</span><strong id="metric-processed">-</strong></article>
@@ -130,7 +146,8 @@
           <div class="sql-toolbar">
             <input id="sql-search" type="search" placeholder="Search SQL" />
             <button id="copy-sql" type="button" class="tool-button">Copy</button>
-            <a id="source-download" class="tool-link disabled" href="#" aria-disabled="true">Source</a>
+            <a id="source-download" class="tool-link disabled" href="#" aria-disabled="true">Download Source</a>
+            <span id="sql-meta" class="sql-meta">No source selected</span>
           </div>
           <pre id="sql-preview" class="sql-preview"><code>Select an object to preview SQL.</code></pre>
         </div>
@@ -183,6 +200,16 @@
         </div>
       </div>
       <div id="console-log" class="console-log"></div>
+    </section>
+  </div>
+
+  <div id="command-overlay" class="command-overlay hidden" role="dialog" aria-modal="true" aria-label="Command palette">
+    <section class="command-palette">
+      <div class="command-header">
+        <input id="command-input" type="search" placeholder="Type a command, object name, schema, or file path" />
+        <button id="command-close" type="button" class="tool-button">Esc</button>
+      </div>
+      <div id="command-list" class="command-list"></div>
     </section>
   </div>
 
