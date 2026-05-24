@@ -19,16 +19,32 @@ def build_output_tree_from_objects(objects: list[DumpObject]) -> dict[str, Any]:
     return build_file_tree(objects)
 
 
+def build_augmented_output_tree(output_root: Path, objects: list[DumpObject], extra_dirs: tuple[str, ...] = ("restore",)) -> dict[str, Any]:
+    tree = build_file_tree(objects)
+    children = [child for child in tree.get("children", []) if child.get("name") not in extra_dirs]
+    for dirname in extra_dirs:
+        extra_path = output_root / dirname
+        if not extra_path.exists():
+            continue
+        extra_node = build_output_tree(extra_path)
+        _prefix_paths(extra_node, dirname)
+        children.append(extra_node)
+    tree["children"] = sorted(children, key=lambda item: (item.get("type") == "file", str(item.get("name", "")).lower()))
+    return tree
+
+
 def load_manifest_summary(output_root: Path) -> dict[str, Any]:
     manifest_dir = output_root / "manifest"
     summary_path = manifest_dir / "manifest.json"
     statistics_path = manifest_dir / "statistics.json"
     navigator_path = manifest_dir / "navigator.json"
     schema_index_path = manifest_dir / "schema_index.json"
+    restore_manifest_path = output_root / "restore" / "restore_manifest.json"
     summary: dict[str, Any] = {}
     statistics: dict[str, Any] = {}
     navigator: dict[str, Any] = {}
     schema_index: dict[str, Any] = {}
+    restore: dict[str, Any] = {}
 
     if summary_path.exists():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -38,6 +54,8 @@ def load_manifest_summary(output_root: Path) -> dict[str, Any]:
         navigator = json.loads(navigator_path.read_text(encoding="utf-8"))
     if schema_index_path.exists():
         schema_index = json.loads(schema_index_path.read_text(encoding="utf-8"))
+    if restore_manifest_path.exists():
+        restore = json.loads(restore_manifest_path.read_text(encoding="utf-8"))
 
     return {
         "summary": summary,
@@ -45,6 +63,7 @@ def load_manifest_summary(output_root: Path) -> dict[str, Any]:
         "counts_by_schema": statistics.get("counts_by_schema", {}),
         "navigator": navigator,
         "schema_index": schema_index,
+        "restore": restore,
     }
 
 
@@ -73,3 +92,10 @@ def _sorted_children(path: Path) -> list[Path]:
         for entry in entries:
             children.append(Path(entry.path))
     return sorted(children, key=lambda item: (item.is_file(), item.name.lower()))
+
+
+def _prefix_paths(node: dict[str, Any], prefix: str) -> None:
+    current_path = str(node.get("path") or "")
+    node["path"] = f"{prefix}/{current_path}" if current_path else prefix
+    for child in node.get("children") or []:
+        _prefix_paths(child, prefix)

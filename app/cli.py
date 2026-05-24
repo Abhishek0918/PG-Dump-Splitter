@@ -9,6 +9,7 @@ from rich.table import Table
 
 from app.config import SplitterConfig
 from app.engine import DumpSplitterEngine
+from app.restore_generator import RestoreScriptGenerator, find_restore_script
 from app.validator import DumpValidator
 
 app = typer.Typer(help="PGSplit Enterprise CLI")
@@ -65,7 +66,19 @@ def show_graph(
 @app.command("restore")
 def show_restore_order(
     output: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    mode: str = typer.Option("full", "--mode", "-m", help="full, schema-only, data-only, post-data"),
+    schema: str | None = typer.Option(None, "--schema", "-s", help="Generate/select a schema restore script"),
+    config: Path | None = typer.Option(None, "--config", "-c"),
 ) -> None:
+    cfg = _load_config(config)
+    generator = RestoreScriptGenerator(cfg)
+    restore_manifest = generator.generate_from_output(output)
+    script = find_restore_script(restore_manifest, "schema" if schema else mode, schema)
+    console.print(f"Restore script: {output / script['path']}")
+    console.print(f"Objects: {script['object_count']} | Data: {'yes' if script['includes_data'] else 'no'}")
+    for warning in script.get("warnings") or []:
+        console.print(f"[yellow]Warning:[/yellow] {warning}")
+
     restore_path = output / "manifest" / "restore_order.json"
     payload = json.loads(restore_path.read_text(encoding="utf-8"))
     table = Table(title="Restore Order")
@@ -73,7 +86,9 @@ def show_restore_order(
     table.add_column("Type")
     table.add_column("Object ID")
     table.add_column("Path")
-    for index, entry in enumerate(payload, start=1):
+    selected_ids = set(script.get("objects") or [])
+    filtered_payload = [entry for entry in payload if entry.get("object_id") in selected_ids]
+    for index, entry in enumerate(filtered_payload, start=1):
         table.add_row(str(index), entry["object_type"], entry["object_id"], entry.get("path") or "")
     console.print(table)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api_models import JobEventResponse, JobResponse, SubmitPathRequest
@@ -146,6 +146,52 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
             return service.get_visualization_payload(job_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/jobs/{job_id}/restore-plan")
+    def get_job_restore_plan(job_id: str) -> dict[str, object]:
+        job = service.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        if job.status != "completed":
+            raise HTTPException(status_code=409, detail="Restore assets are not ready yet")
+        try:
+            return {"job_id": job_id, **service.get_restore_plan(job_id)}
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/jobs/{job_id}/restore-script")
+    def get_job_restore_script(
+        job_id: str,
+        mode: str = Query(default="full"),
+        schema: str | None = Query(default=None),
+        format: str = Query(default="json", pattern="^(json|text)$"),
+    ) -> object:
+        job = service.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        if job.status != "completed":
+            raise HTTPException(status_code=409, detail="Restore assets are not ready yet")
+        try:
+            payload = service.read_restore_script(job_id, mode, schema)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if format == "text":
+            return PlainTextResponse(str(payload["sql"]), media_type="text/sql")
+        return {"job_id": job_id, **payload}
+
+    @app.get("/api/jobs/{job_id}/restore-download")
+    def download_restore_assets(job_id: str) -> FileResponse:
+        job = service.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        if job.status != "completed":
+            raise HTTPException(status_code=409, detail="Restore assets are not ready yet")
+        try:
+            archive = service.archive_restore_assets(job_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        download_name = f"{Path(job.input_name or 'dump').stem}_restore_assets.zip"
+        return FileResponse(archive, media_type="application/zip", filename=download_name)
 
     @app.get("/api/jobs/{job_id}/source")
     def get_object_source(job_id: str, object_id: str = Query(...)) -> dict[str, str | None]:

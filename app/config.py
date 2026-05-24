@@ -18,6 +18,7 @@ class SplitterConfig:
     jobs_dirname: str = "jobs"
     sqlite_filename: str = "pgsplit.db"
     manifest_dirname: str = "manifest"
+    restore_dirname: str = "restore"
     schema_dirname: str = "schemas"
     global_dirname: str = "global"
     data_dirname: str = "data"
@@ -60,6 +61,7 @@ class SplitterConfig:
             "jobs_dirname",
             "sqlite_filename",
             "manifest_dirname",
+            "restore_dirname",
             "schema_dirname",
             "global_dirname",
             "data_dirname",

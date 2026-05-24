@@ -9,7 +9,9 @@ from app.dependency.fk_mapper import map_foreign_keys
 from app.dependency.graph_builder import DependencyGraph
 from app.dependency.restore_order import grouped_restore_order
 from app.models.metadata import DumpObject, SplitResult
+from app.output_tree import build_augmented_output_tree
 from app.parser.pg_dump_parser import PgDumpParser
+from app.restore_generator import RestoreScriptGenerator
 from app.visualization import build_visualization_payload
 from app.writers.file_writer import SplitFileWriter
 from app.writers.folder_builder import FolderBuilder
@@ -25,6 +27,7 @@ class DumpSplitterEngine:
         self.file_writer = SplitFileWriter(config)
         self.folder_builder = FolderBuilder(config)
         self.manifest_writer = ManifestWriter(config)
+        self.restore_generator = RestoreScriptGenerator(config)
 
     def split_dump(
         self,
@@ -76,10 +79,12 @@ class DumpSplitterEngine:
         self.manifest_writer.write_json(output_root, "foreign_keys.json", fk_map)
         self.manifest_writer.write_json(output_root, "restore_order.json", restore_plan)
         self.manifest_writer.write_json(output_root, "navigator.json", catalog_payload["navigator"])
-        self.manifest_writer.write_json(output_root, "output_tree.json", catalog_payload["files"])
         self.manifest_writer.write_json(output_root, "schema_index.json", catalog_payload["schema_index"])
         self.manifest_writer.write_json(output_root, "visualization.json", visualization_payload)
         self.manifest_writer.write_statistics(output_root, result.objects, result.warnings)
+        self._emit_progress(progress_callback, 89, "writing", "Generating restore scripts", min(processed_bytes, file_size), len(result.objects))
+        restore_manifest = self.restore_generator.generate(output_root, result.objects, restore_plan)
+        self.manifest_writer.write_json(output_root, "output_tree.json", build_augmented_output_tree(output_root, result.objects, (self.config.restore_dirname,)))
         self.manifest_writer.write_summary(output_root, result.objects, graph.edge_count(), len(restore_plan))
         if self.config.write_combined_restore:
             self._emit_progress(progress_callback, 91, "writing", "Writing combined restore file", min(processed_bytes, file_size), len(result.objects))
@@ -90,6 +95,7 @@ class DumpSplitterEngine:
             "objects": len(result.objects),
             "dependencies": graph.edge_count(),
             "restore_items": len(restore_plan),
+            "restore_scripts": len(restore_manifest.get("scripts", [])),
         }
         return result
 

@@ -15,6 +15,9 @@ const state = {
   navigator: null,
   outputTree: null,
   visualization: null,
+  restorePlan: null,
+  selectedRestoreScript: null,
+  selectedRestoreSql: "",
   selectedObject: null,
   selectedSql: "",
   sourceBlobUrl: null,
@@ -69,12 +72,14 @@ const elements = {
   erdTab: document.getElementById("erd-tab"),
   dependencyTab: document.getElementById("dependency-tab"),
   sqlTab: document.getElementById("sql-tab"),
+  restoreTab: document.getElementById("restore-tab"),
   breadcrumbBar: document.getElementById("breadcrumb-bar"),
   overviewView: document.getElementById("overview-view"),
   filesView: document.getElementById("files-view"),
   erdView: document.getElementById("erd-view"),
   dependencyView: document.getElementById("dependency-view"),
   sqlView: document.getElementById("sql-view"),
+  restoreView: document.getElementById("restore-view"),
   treeWrap: document.getElementById("tree-wrap"),
   erdWrap: document.getElementById("erd-wrap"),
   dependencyWrap: document.getElementById("dependency-wrap"),
@@ -94,6 +99,15 @@ const elements = {
   sourceDownload: document.getElementById("source-download"),
   sqlMeta: document.getElementById("sql-meta"),
   sqlPreview: document.getElementById("sql-preview"),
+  restoreMode: document.getElementById("restore-mode"),
+  restoreSchema: document.getElementById("restore-schema"),
+  restorePreviewButton: document.getElementById("restore-preview-button"),
+  restoreDownloadLink: document.getElementById("restore-download-link"),
+  restoreSummary: document.getElementById("restore-summary"),
+  restoreScripts: document.getElementById("restore-scripts"),
+  restoreWarnings: document.getElementById("restore-warnings"),
+  restorePreviewMeta: document.getElementById("restore-preview-meta"),
+  restorePreview: document.getElementById("restore-preview"),
   commandOverlay: document.getElementById("command-overlay"),
   commandInput: document.getElementById("command-input"),
   commandClose: document.getElementById("command-close"),
@@ -206,12 +220,20 @@ function bindEvents() {
   });
   elements.sqlSearch.addEventListener("input", renderSqlPreview);
   elements.copySql.addEventListener("click", copySql);
+  elements.restoreMode.addEventListener("change", () => {
+    renderRestorePlanner();
+  });
+  elements.restoreSchema.addEventListener("change", () => {
+    renderRestorePlanner();
+  });
+  elements.restorePreviewButton.addEventListener("click", () => previewSelectedRestoreScript());
   window.addEventListener("keydown", handleGlobalKeydown);
   bindTab(elements.overviewTab, "overview");
   bindTab(elements.filesTab, "files");
   bindTab(elements.erdTab, "erd");
   bindTab(elements.dependencyTab, "dependency");
   bindTab(elements.sqlTab, "sql");
+  bindTab(elements.restoreTab, "restore");
   bindResizer(document.getElementById("left-resizer"), "left");
   bindResizer(document.getElementById("right-resizer"), "right");
   bindResizer(document.getElementById("console-resizer"), "console");
@@ -289,6 +311,7 @@ function setActiveView(view) {
     ["erd", elements.erdTab, elements.erdView],
     ["dependency", elements.dependencyTab, elements.dependencyView],
     ["sql", elements.sqlTab, elements.sqlView],
+    ["restore", elements.restoreTab, elements.restoreView],
   ];
   for (const [key, tab, panel] of views) {
     tab.classList.toggle("active", key === view);
@@ -616,6 +639,7 @@ function buildCommandItems() {
     { kind: "command", title: "Open ERD", meta: "Show parsed table relationships", badge: "View", action: () => setActiveView("erd") },
     { kind: "command", title: "Open Dependency Graph", meta: "Show dependency edges", badge: "View", action: () => setActiveView("dependency") },
     { kind: "command", title: "Open SQL Preview", meta: "Inspect selected object source", badge: "View", action: () => setActiveView("sql") },
+    { kind: "command", title: "Open Restore Planner", meta: "Preview generated restore scripts", badge: "View", action: () => setActiveView("restore") },
     { kind: "command", title: "Switch to Dark Theme", meta: "Database-tool friendly dark mode", badge: "Theme", action: () => applyTheme("dark") },
     { kind: "command", title: "Switch to Light Theme", meta: "Use the light workspace theme", badge: "Theme", action: () => applyTheme("light") },
     { kind: "command", title: "Use System Theme", meta: "Follow OS theme preference", badge: "Theme", action: () => applyTheme("system") },
@@ -715,14 +739,17 @@ async function loadJobArtifacts(jobId) {
   renderSkeleton(elements.treeWrap, 9);
   renderSkeleton(elements.erdWrap, 6);
   renderSkeleton(elements.dependencyWrap, 7);
+  renderSkeleton(elements.restoreScripts, 5);
   try {
-    const [treePayload, visualizationPayload] = await Promise.all([
+    const [treePayload, visualizationPayload, restorePayload] = await Promise.all([
       requestJson(`/api/jobs/${jobId}/tree`),
       loadVisualizationPayload(jobId),
+      loadRestorePlan(jobId),
     ]);
     state.navigator = treePayload.manifest?.navigator || null;
     state.outputTree = treePayload.tree || null;
     state.visualization = visualizationPayload;
+    state.restorePlan = restorePayload;
     renderAllViews();
     if (state.globalSearch) queueObjectSearch(state.globalSearch, 0);
   } catch (error) {
@@ -736,6 +763,14 @@ async function loadVisualizationPayload(jobId) {
   } catch {
     const objectsPayload = await requestJson(`/api/jobs/${jobId}/objects`);
     return buildVisualizationFromObjects(objectsPayload.items || []);
+  }
+}
+
+async function loadRestorePlan(jobId) {
+  try {
+    return await requestJson(`/api/jobs/${jobId}/restore-plan`);
+  } catch {
+    return null;
   }
 }
 
@@ -753,6 +788,7 @@ function renderAllViews() {
   renderFiles();
   renderErd();
   renderDependencyGraph();
+  renderRestorePlanner();
   renderSearchResults();
   renderBreadcrumb();
 }
@@ -801,6 +837,110 @@ function renderDependencyGraph() {
     ${renderVizStats({ object_count: filtered.nodes.length, dependency_count: filtered.edges.length })}
     <div class="edge-list">${filtered.edges.slice(0, 180).map((edge) => `<div class="edge-row"><span>${escapeHtml(shortObjectLabel(edge.source))}</span><strong>-></strong><span>${escapeHtml(shortObjectLabel(edge.target))}</span></div>`).join("") || "No dependencies recorded."}</div>
   `;
+}
+
+function renderRestorePlanner() {
+  const plan = state.restorePlan;
+  const complete = state.activeJob?.status === "completed";
+  elements.restoreDownloadLink.classList.toggle("disabled", !complete);
+  elements.restoreDownloadLink.href = complete && state.jobId ? `/api/jobs/${state.jobId}/restore-download` : "#";
+  if (!plan?.scripts) {
+    elements.restoreSummary.textContent = "Restore scripts will appear after a completed split.";
+    renderPlaceholder(elements.restoreScripts, "Restore planner is not ready.");
+    elements.restoreWarnings.innerHTML = "";
+    return;
+  }
+
+  populateRestoreSchemas(plan.schemas || []);
+  const selectedMode = elements.restoreMode.value;
+  const selectedSchema = selectedMode === "schema" ? elements.restoreSchema.value || null : null;
+  const selectedScript = findRestoreScript(selectedMode, selectedSchema) || plan.scripts[0];
+  state.selectedRestoreScript = selectedScript;
+  elements.restoreSummary.textContent = `${plan.scripts.length} scripts | ${formatCount((plan.schemas || []).length)} schemas | ${formatCount(plan.warnings?.length || 0)} warnings`;
+  elements.restoreScripts.classList.remove("empty-state");
+  elements.restoreScripts.innerHTML = plan.scripts.map((script) => renderRestoreScriptCard(script, selectedScript)).join("");
+  elements.restoreScripts.querySelectorAll("[data-restore-script]").forEach((button) => {
+    button.addEventListener("click", () => selectRestoreScript(button.dataset.restoreScript));
+  });
+  renderRestoreWarnings(selectedScript?.warnings || plan.warnings || []);
+}
+
+function populateRestoreSchemas(schemas) {
+  const current = elements.restoreSchema.value;
+  const options = ['<option value="">All schemas</option>', ...schemas.map((schema) => `<option value="${escapeHtml(schema)}">${escapeHtml(schema)}</option>`)];
+  elements.restoreSchema.innerHTML = options.join("");
+  if (schemas.includes(current)) elements.restoreSchema.value = current;
+}
+
+function renderRestoreScriptCard(script, selectedScript) {
+  const active = script.path === selectedScript?.path ? "active" : "";
+  const label = script.schema ? `${script.mode}: ${script.schema}` : script.mode;
+  const href = restoreScriptUrl(script, "text");
+  return `
+    <article class="restore-script-card ${active}">
+      <div>
+        <span class="restore-script-title">${escapeHtml(script.script_name)}</span>
+        <span class="restore-script-meta">${escapeHtml(label)} | ${formatCount(script.object_count)} objects | data ${script.includes_data ? "yes" : "no"}</span>
+      </div>
+      <div class="restore-actions">
+        <button class="tool-button" type="button" data-restore-script="${escapeHtml(script.path)}">Preview</button>
+        <a class="tool-link" href="${href}" download="${escapeHtml(script.script_name)}">SQL</a>
+      </div>
+    </article>
+  `;
+}
+
+function renderRestoreWarnings(warnings) {
+  const items = Array.isArray(warnings) ? warnings : [];
+  elements.restoreWarnings.innerHTML = items.length
+    ? items.slice(0, 12).map((warning) => `<div class="warning-line">${escapeHtml(warning)}</div>`).join("")
+    : "";
+}
+
+function selectRestoreScript(path) {
+  const script = (state.restorePlan?.scripts || []).find((item) => item.path === path);
+  if (!script) return;
+  elements.restoreMode.value = script.mode;
+  elements.restoreSchema.value = script.schema || "";
+  state.selectedRestoreScript = script;
+  renderRestorePlanner();
+  loadRestoreScript(script.mode, script.schema || null);
+}
+
+function previewSelectedRestoreScript() {
+  const mode = elements.restoreMode.value;
+  const schema = mode === "schema" ? elements.restoreSchema.value || null : null;
+  const script = findRestoreScript(mode, schema);
+  if (!script) return showError("No restore script found for the selected mode.");
+  state.selectedRestoreScript = script;
+  renderRestorePlanner();
+  loadRestoreScript(script.mode, script.schema || null);
+}
+
+async function loadRestoreScript(mode, schema) {
+  if (!state.jobId) return;
+  try {
+    const payload = await requestJson(restoreScriptUrl({ mode, schema }, "json"));
+    state.selectedRestoreSql = payload.sql || "";
+    elements.restorePreviewMeta.textContent = `${payload.script_name} | ${formatCount(payload.metadata?.object_count)} objects | ${payload.path}`;
+    elements.restorePreview.innerHTML = `<code>${highlightSql(state.selectedRestoreSql)}</code>`;
+    renderRestoreWarnings(payload.metadata?.warnings || []);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function findRestoreScript(mode, schema) {
+  const scripts = state.restorePlan?.scripts || [];
+  return scripts.find((script) => script.mode === mode && (script.schema || "") === (schema || ""))
+    || (mode === "schema" && !schema ? scripts.find((script) => script.script_name === "schema_only.sql") : null);
+}
+
+function restoreScriptUrl(script, format) {
+  if (!state.jobId) return "#";
+  const params = new URLSearchParams({ mode: script.mode || "full", format });
+  if (script.schema) params.set("schema", script.schema);
+  return `/api/jobs/${encodeURIComponent(state.jobId)}/restore-script?${params.toString()}`;
 }
 
 function renderNavigatorNode(node, isRoot = false) {
@@ -1144,6 +1284,7 @@ function renderEmptyStates() {
   renderPlaceholder(elements.treeWrap, "Output files will appear here.");
   renderPlaceholder(elements.erdWrap, "ERD will appear here.");
   renderPlaceholder(elements.dependencyWrap, "Dependency graph will appear here.");
+  renderPlaceholder(elements.restoreScripts, "Restore scripts will appear here.");
 }
 
 function showError(message) {
@@ -1190,12 +1331,13 @@ function viewTitle(view) {
     erd: "ERD",
     dependency: "Dependency Graph",
     sql: "SQL Preview",
+    restore: "Restore Planner",
   };
   return map[view] || "Overview";
 }
 
 function iconText(kind) {
-  const map = { schemas: "SCH", schema: "SCH", tables: "TBL", views: "VIEW", materialized_views: "MV", functions: "FN", triggers: "TRG", indexes: "IDX", sequences: "SEQ", constraints: "FK", enums: "ENUM", types: "TYPE", policies: "RLS", grants: "GRANT", comments: "NOTE", data: "CPY", manifest: "JSON", file: "SQL", directory: "DIR", command: "CMD" };
+  const map = { schemas: "SCH", schema: "SCH", tables: "TBL", views: "VIEW", materialized_views: "MV", functions: "FN", triggers: "TRG", indexes: "IDX", sequences: "SEQ", constraints: "FK", enums: "ENUM", types: "TYPE", policies: "RLS", grants: "GRANT", comments: "NOTE", data: "CPY", restore: "RST", manifest: "JSON", file: "SQL", directory: "DIR", command: "CMD" };
   return map[kind] || String(kind || "OBJ").slice(0, 4).toUpperCase();
 }
 

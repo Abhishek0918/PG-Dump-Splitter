@@ -836,6 +836,18 @@ label {
   flex-wrap: wrap;
 }
 
+.restore-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.restore-toolbar select {
+  min-width: 180px;
+}
+
 .sql-toolbar input {
   flex: 1 1 260px;
 }
@@ -866,6 +878,79 @@ label {
 .sql-hit {
   background: #fde68a;
   color: #111827;
+}
+
+.restore-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.72fr) minmax(360px, 1.28fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.restore-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.restore-scripts {
+  display: grid;
+  gap: 8px;
+}
+
+.restore-script-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 9px;
+}
+
+.restore-script-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.restore-script-title {
+  display: block;
+  overflow: hidden;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.restore-script-meta,
+.restore-warnings {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.restore-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.restore-warnings {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.warning-line {
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
+  color: var(--warning);
+  padding: 7px 8px;
+}
+
+.restore-preview {
+  min-height: 560px;
 }
 
 .skeleton {
@@ -1043,6 +1128,10 @@ label {
   .tree-wrap,
   .diagram-wrap {
     height: 420px;
+  }
+
+  .restore-layout {
+    grid-template-columns: 1fr;
   }
 
   .resizer {

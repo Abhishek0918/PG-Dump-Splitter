@@ -86,6 +86,7 @@
           <button id="erd-tab" class="workbench-tab" type="button">ERD</button>
           <button id="dependency-tab" class="workbench-tab" type="button">Dependency Graph</button>
           <button id="sql-tab" class="workbench-tab" type="button">SQL Preview</button>
+          <button id="restore-tab" class="workbench-tab" type="button">Restore Planner</button>
         </nav>
 
         <div id="breadcrumb-bar" class="breadcrumb-bar">Workspace / Overview</div>
@@ -150,6 +151,42 @@
             <span id="sql-meta" class="sql-meta">No source selected</span>
           </div>
           <pre id="sql-preview" class="sql-preview"><code>Select an object to preview SQL.</code></pre>
+        </div>
+        <div id="restore-view" class="workbench-view">
+          <div class="restore-toolbar">
+            <select id="restore-mode" aria-label="Restore mode">
+              <option value="full">Full restore</option>
+              <option value="schema">Schema-only / selected schema</option>
+              <option value="data">Data-only</option>
+              <option value="post_data">Post-data</option>
+            </select>
+            <select id="restore-schema" aria-label="Restore schema">
+              <option value="">All schemas</option>
+            </select>
+            <button id="restore-preview-button" type="button" class="tool-button">Preview Script</button>
+            <a id="restore-download-link" class="tool-link disabled primary" href="#" aria-disabled="true">Download Restore ZIP</a>
+          </div>
+          <div class="restore-layout">
+            <section class="restore-panel">
+              <div class="panel-title">
+                <div>
+                  <h3>Generated Scripts</h3>
+                  <p id="restore-summary">Restore scripts will appear after a completed split.</p>
+                </div>
+              </div>
+              <div id="restore-scripts" class="restore-scripts"></div>
+              <div id="restore-warnings" class="restore-warnings"></div>
+            </section>
+            <section class="restore-panel restore-preview-panel">
+              <div class="panel-title">
+                <div>
+                  <h3>Restore Preview</h3>
+                  <p id="restore-preview-meta">Select a restore script to inspect its psql include order.</p>
+                </div>
+              </div>
+              <pre id="restore-preview" class="sql-preview restore-preview"><code>No restore script selected.</code></pre>
+            </section>
+          </div>
         </div>
       </section>
 

@@ -14,6 +14,7 @@ from app.config import SplitterConfig
 from app.db import JobRecord, SQLiteStore
 from app.engine import DumpSplitterEngine
 from app.output_tree import build_output_tree, load_manifest_summary
+from app.restore_generator import RestoreScriptGenerator, find_restore_script
 
 try:
     import psutil
@@ -27,6 +28,7 @@ class SplitterService:
         self.config.ensure_runtime_dirs()
         self.store = SQLiteStore(config.sqlite_path)
         self.engine = DumpSplitterEngine(config)
+        self.restore_generator = RestoreScriptGenerator(config)
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pgsplit")
 
     def submit_job_from_path(self, dump_path: Path) -> JobRecord:
@@ -181,6 +183,44 @@ class SplitterService:
             raise FileNotFoundError("Visualization manifest is missing")
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def get_restore_plan(self, job_id: str) -> dict:
+        output_dir = self.get_output_dir(job_id)
+        if output_dir is None or not output_dir.exists():
+            raise FileNotFoundError("Restore assets are not ready yet")
+        manifest_path = output_dir / self.config.restore_dirname / "restore_manifest.json"
+        if not manifest_path.exists():
+            return self.restore_generator.generate_from_output(output_dir)
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    def read_restore_script(self, job_id: str, mode: str | None = None, schema: str | None = None) -> dict:
+        output_dir = self.get_output_dir(job_id)
+        if output_dir is None or not output_dir.exists():
+            raise FileNotFoundError("Restore assets are not ready yet")
+        manifest = self.get_restore_plan(job_id)
+        script = find_restore_script(manifest, mode, schema)
+        script_path = output_dir / str(script["path"])
+        if not script_path.exists():
+            raise FileNotFoundError(f"Restore script missing: {script['script_name']}")
+        return {
+            "mode": script["mode"],
+            "schema": script.get("schema"),
+            "script_name": script["script_name"],
+            "path": script["path"],
+            "sql": script_path.read_text(encoding="utf-8"),
+            "metadata": script,
+        }
+
+    def archive_restore_assets(self, job_id: str) -> Path:
+        job = self.get_job(job_id)
+        output_dir = self.get_output_dir(job_id)
+        if output_dir is None or not output_dir.exists():
+            raise FileNotFoundError("Restore assets are not ready yet")
+        restore_dir = output_dir / self.config.restore_dirname
+        if not restore_dir.exists():
+            self.get_restore_plan(job_id)
+        archive_base = output_dir.parent / f"{self._archive_stem(job.input_name if job else None)}_restore_assets"
+        return Path(shutil.make_archive(str(archive_base), "zip", root_dir=restore_dir))
+
     def read_object_source(self, job_id: str, object_id: str) -> dict[str, str | None]:
         output_dir = self.get_output_dir(job_id)
         if output_dir is None or not output_dir.exists():
@@ -206,11 +246,16 @@ class SplitterService:
 
     @staticmethod
     def _archive_basename(input_name: str | None) -> str:
+        stem = SplitterService._archive_stem(input_name)
+        return f"{stem}_split_output"
+
+    @staticmethod
+    def _archive_stem(input_name: str | None) -> str:
         stem = Path(input_name or "dump").stem
         stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")
         if not stem:
             stem = "dump"
-        return f"{stem}_split_output"
+        return stem
 
     @staticmethod
     def _memory_bytes() -> int | None:
