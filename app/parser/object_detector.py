@@ -35,6 +35,7 @@ class DetectedObject:
     schema: str | None
     name: str
     target_table: str | None = None
+    signature: str | None = None
 
     @property
     def object_id(self) -> str:
@@ -112,7 +113,73 @@ ALTER_CONSTRAINT_RE = re.compile(
     rf"\bALTER\s+TABLE\s+(?:ONLY\s+)?(?P<qualified>{QUALIFIED})\b.*?\bADD\s+CONSTRAINT\s+(?P<constraint>{IDENT})",
     re.IGNORECASE | re.DOTALL,
 )
-COPY_RE = re.compile(r"\bCOPY\s+(?P<qualified>[^\s(]+)\s*\(", re.IGNORECASE | re.DOTALL)
+COPY_RE = re.compile(rf"\bCOPY\s+(?P<qualified>{QUALIFIED})(?=\s*(?:\(|FROM\s+stdin\b))", re.IGNORECASE | re.DOTALL)
+
+
+def _extract_parenthesized(value: str, open_index: int) -> str | None:
+    if open_index < 0 or open_index >= len(value) or value[open_index] != "(":
+        return None
+    depth = 0
+    in_single = False
+    in_double = False
+    for index in range(open_index, len(value)):
+        char = value[index]
+        prev = value[index - 1] if index > 0 else ""
+        if char == "'" and not in_double and prev != "\\":
+            in_single = not in_single
+        elif char == '"' and not in_single and prev != "\\":
+            in_double = not in_double
+
+        if in_single or in_double:
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return value[open_index + 1 : index]
+    return None
+
+
+def _split_top_level(value: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    in_single = False
+    in_double = False
+    for index, char in enumerate(value):
+        prev = value[index - 1] if index > 0 else ""
+        if char == "'" and not in_double and prev != "\\":
+            in_single = not in_single
+        elif char == '"' and not in_single and prev != "\\":
+            in_double = not in_double
+
+        if not in_single and not in_double:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif char == "," and depth == 0:
+                parts.append("".join(current).strip())
+                current = []
+                continue
+        current.append(char)
+    if current:
+        parts.append("".join(current).strip())
+    return parts
+
+
+def _normalize_function_signature(args: str | None) -> str | None:
+    if args is None:
+        return None
+    normalized_args: list[str] = []
+    for arg in _split_top_level(args):
+        value = re.sub(r"\s+", " ", arg.strip())
+        value = re.split(r"\s+DEFAULT\s+|=", value, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        value = re.sub(r"^(?:IN|OUT|INOUT|VARIADIC)\s+", "", value, flags=re.IGNORECASE).strip()
+        if value:
+            normalized_args.append(value)
+    return f"({', '.join(normalized_args)})"
 
 
 def detect_object(statement: str, is_copy_data: bool = False) -> DetectedObject:
@@ -142,7 +209,12 @@ def detect_object(statement: str, is_copy_data: bool = False) -> DetectedObject:
             return DetectedObject(object_type, object_schema, name, target_table=f"{object_schema}.{table}")
 
         schema, name = _split_qualified(match.group("qualified"))
-        if object_type in {ObjectType.TABLE, ObjectType.VIEW, ObjectType.MATERIALIZED_VIEW, ObjectType.SEQUENCE, ObjectType.ENUM, ObjectType.TYPE, ObjectType.FUNCTION}:
+        if object_type == ObjectType.FUNCTION:
+            object_schema = schema or "public"
+            open_index = statement.find("(", match.end("qualified"))
+            signature = _normalize_function_signature(_extract_parenthesized(statement, open_index))
+            return DetectedObject(object_type, object_schema, name, signature=signature)
+        if object_type in {ObjectType.TABLE, ObjectType.VIEW, ObjectType.MATERIALIZED_VIEW, ObjectType.SEQUENCE, ObjectType.ENUM, ObjectType.TYPE}:
             object_schema = schema or "public"
             return DetectedObject(object_type, object_schema, name)
 

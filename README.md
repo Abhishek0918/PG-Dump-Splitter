@@ -75,7 +75,26 @@ http://127.0.0.1:8080
 - `GET /api/jobs` -> list recent jobs
 - `GET /api/jobs/{job_id}` -> job status
 - `GET /api/jobs/{job_id}/objects` -> split object list
+- `GET /api/jobs/{job_id}/search` -> search completed objects
+- `GET /api/jobs/{job_id}/tree` -> output tree + manifest summary
+- `GET /api/jobs/{job_id}/source` -> object SQL source
+- `GET /api/jobs/{job_id}/restore-plan` -> generated restore script manifest
+- `GET /api/jobs/{job_id}/restore-script` -> restore script as JSON or text
+- `GET /api/jobs/{job_id}/restore-download` -> download restore helper scripts
 - `GET /api/jobs/{job_id}/download` -> download split ZIP
+
+## Runtime Guardrails
+
+Path-based jobs can be disabled or restricted with config:
+
+```yaml
+allow_path_jobs: true
+allowed_path_roots:
+  - "E:/PG-Dump-Splitter/input"
+max_upload_bytes: 2147483648
+```
+
+When `allowed_path_roots` is set, `/api/jobs/path` only accepts `.sql` files inside those roots. Uploads are streamed to disk and rejected once `max_upload_bytes` is exceeded.
 
 ## Output Layout
 
@@ -106,5 +125,11 @@ output/
     foreign_keys.json
     restore_order.json
     statistics.json
+  restore/
+    full_restore.sql
+    schema_only.sql
+    data_only.sql
+    post_data.sql
+    restore_manifest.json
   combined_restore.sql
 ```

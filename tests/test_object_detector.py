@@ -25,3 +25,20 @@ def test_detect_copy_block_as_data() -> None:
     assert obj.object_type == ObjectType.DATA
     assert obj.schema == "public"
     assert obj.name == "orders"
+
+
+def test_detect_copy_block_without_column_list_as_data() -> None:
+    statement = "COPY public.orders FROM stdin;\n1\t120\n\\.\n"
+    obj = detect_object(statement, is_copy_data=True)
+    assert obj.object_type == ObjectType.DATA
+    assert obj.schema == "public"
+    assert obj.name == "orders"
+
+
+def test_detect_function_signature_for_overloaded_functions() -> None:
+    statement = "CREATE FUNCTION public.calculate(input_id integer, label text DEFAULT 'x') RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;"
+    obj = detect_object(statement)
+    assert obj.object_type == ObjectType.FUNCTION
+    assert obj.schema == "public"
+    assert obj.name == "calculate"
+    assert obj.signature == "(input_id integer, label text)"

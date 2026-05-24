@@ -13,10 +13,17 @@ def _safe_name(value: str) -> str:
     return cleaned or "unnamed"
 
 
+def _safe_object_name(obj: DumpObject) -> str:
+    if obj.object_type == ObjectType.FUNCTION and obj.attributes.get("signature"):
+        signature = str(obj.attributes["signature"]).strip()
+        signature_token = signature[1:-1] if signature.startswith("(") and signature.endswith(")") else signature
+        return _safe_name(f"{obj.name}_{signature_token or 'noargs'}")
+    return _safe_name(obj.name)
+
+
 class SplitFileWriter:
     def __init__(self, config: SplitterConfig) -> None:
         self.config = config
-        self._used_paths: set[Path] = set()
 
     def write(self, output_root: Path, obj: DumpObject) -> Path:
         target = self._resolve_target(output_root, obj)
@@ -27,7 +34,7 @@ class SplitFileWriter:
         return target
 
     def _resolve_target(self, output_root: Path, obj: DumpObject) -> Path:
-        object_name = _safe_name(obj.name)
+        object_name = _safe_object_name(obj)
 
         if obj.object_type == ObjectType.DATA:
             base_name = _safe_name(obj.object_id.replace("#data", ""))
@@ -44,15 +51,13 @@ class SplitFileWriter:
         return output_root / self.config.global_dirname / obj.object_type.value / f"{object_name}.sql"
 
     def _deduplicate_path(self, target: Path) -> Path:
-        if target not in self._used_paths and not target.exists():
-            self._used_paths.add(target)
+        if not target.exists():
             return target
         stem = target.stem
         suffix = target.suffix
         index = 1
         while True:
             candidate = target.with_name(f"{stem}__{index:03d}{suffix}")
-            if candidate not in self._used_paths and not candidate.exists():
-                self._used_paths.add(candidate)
+            if not candidate.exists():
                 return candidate
             index += 1

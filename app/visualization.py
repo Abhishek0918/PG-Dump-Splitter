@@ -120,8 +120,21 @@ def _collect_relationships(objects: list[DumpObject]) -> list[dict[str, Any]]:
                 _append_relationship(relationships, seen, relationship)
 
         if obj.object_type == ObjectType.CONSTRAINT:
-            match = ALTER_FK_RE.search(obj.statement or "")
-            if match:
+            foreign_key = (obj.attributes or {}).get("foreign_key")
+            if foreign_key:
+                relationship = {
+                    "source_table": foreign_key.get("source_table"),
+                    "source_columns": foreign_key.get("source_columns", []),
+                    "target_table": foreign_key.get("target_table"),
+                    "target_columns": foreign_key.get("target_columns", []),
+                    "constraint_name": obj.name,
+                    "type": "foreign_key",
+                }
+                _append_relationship(relationships, seen, relationship)
+            else:
+                match = ALTER_FK_RE.search(obj.statement or "")
+                if not match:
+                    continue
                 relationship = {
                     "source_table": _normalize_qualified(match.group("source")),
                     "source_columns": _parse_identifier_list(match.group("columns")),

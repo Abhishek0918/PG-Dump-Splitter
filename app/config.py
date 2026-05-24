@@ -26,6 +26,9 @@ class SplitterConfig:
     default_encoding: str = "utf-8"
     write_combined_restore: bool = True
     include_comments: bool = True
+    allow_path_jobs: bool = True
+    allowed_path_roots: tuple[Path, ...] = ()
+    max_upload_bytes: int = 2 * 1024 * 1024 * 1024
     api_host: str = "127.0.0.1"
     api_port: int = 8080
     extras: dict[str, Any] = field(default_factory=dict)
@@ -69,6 +72,9 @@ class SplitterConfig:
             "default_encoding",
             "write_combined_restore",
             "include_comments",
+            "allow_path_jobs",
+            "allowed_path_roots",
+            "max_upload_bytes",
             "api_host",
             "api_port",
         }
@@ -76,5 +82,10 @@ class SplitterConfig:
         for key in ("output_dir", "runtime_dir"):
             if key in kwargs:
                 kwargs[key] = Path(kwargs[key])
+        if "allowed_path_roots" in kwargs:
+            roots = kwargs["allowed_path_roots"] or []
+            if isinstance(roots, (str, Path)):
+                roots = [roots]
+            kwargs["allowed_path_roots"] = tuple(Path(item) for item in roots)
         extras = {key: value for key, value in payload.items() if key not in known}
         return cls(**kwargs, extras=extras)

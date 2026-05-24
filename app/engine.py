@@ -48,10 +48,11 @@ class DumpSplitterEngine:
 
         for index, parsed in enumerate(self.parser.parse(dump_path), start=1):
             obj = parsed.dump_object
+            processed_bytes += len(parsed.raw_text.encode(self.config.default_encoding, errors="replace"))
             self.file_writer.write(output_root, obj)
             graph.add_object(obj)
+            obj.statement = ""
             result.objects.append(obj)
-            processed_bytes += len(parsed.raw_text.encode(self.config.default_encoding, errors="replace"))
             percent = min(75, 5 + (processed_bytes / file_size) * 70)
             rounded_percent = int(percent)
             if rounded_percent != last_percent or index % 100 == 0:
@@ -105,16 +106,25 @@ class DumpSplitterEngine:
         restore_plan: list[dict[str, object]],
         objects: list[DumpObject],
     ) -> None:
+        object_by_path = {obj.path: obj for obj in objects if obj.path}
         object_by_id = {obj.object_id: obj for obj in objects}
         target = output_root / self.config.combined_restore_filename
         with target.open("w", encoding="utf-8", newline="\n") as handle:
             for item in restore_plan:
                 object_id = str(item["object_id"])
-                obj = object_by_id.get(object_id)
+                path = str(item.get("path") or "")
+                obj = object_by_path.get(path) or object_by_id.get(object_id)
                 if obj is None:
                     continue
+                source_path = output_root / path if path else None
+                if source_path is not None and source_path.exists():
+                    statement = source_path.read_text(encoding="utf-8").rstrip()
+                else:
+                    statement = obj.statement.rstrip()
+                if not statement:
+                    continue
                 handle.write(f"-- {obj.object_type.value}: {obj.object_id}\n")
-                handle.write(obj.statement.rstrip())
+                handle.write(statement)
                 handle.write("\n\n")
 
     @staticmethod

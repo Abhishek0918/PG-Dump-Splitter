@@ -37,13 +37,21 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
             job = service.submit_job_from_path(Path(payload.dump_path))
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _as_job_response(job)
 
     @app.post("/api/jobs/upload", response_model=JobResponse)
     def create_job_from_upload(file: UploadFile = File(...)) -> JobResponse:
         if not (file.filename or "").lower().endswith(".sql"):
             raise HTTPException(status_code=400, detail="Only .sql files are accepted")
-        job = service.submit_job_from_upload(file)
+        try:
+            job = service.submit_job_from_upload(file)
+        except ValueError as exc:
+            status_code = 413 if "exceeds maximum size" in str(exc) else 400
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
         return _as_job_response(job)
 
     @app.get("/api/jobs", response_model=list[JobResponse])

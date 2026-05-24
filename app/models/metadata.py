@@ -24,6 +24,7 @@ class DumpObject:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["object_type"] = self.object_type.value
+        data.pop("statement", None)
         return data
 
 

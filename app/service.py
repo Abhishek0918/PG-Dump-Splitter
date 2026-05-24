@@ -27,13 +27,12 @@ class SplitterService:
         self.config = config
         self.config.ensure_runtime_dirs()
         self.store = SQLiteStore(config.sqlite_path)
-        self.engine = DumpSplitterEngine(config)
         self.restore_generator = RestoreScriptGenerator(config)
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pgsplit")
 
     def submit_job_from_path(self, dump_path: Path) -> JobRecord:
-        if not dump_path.exists() or not dump_path.is_file():
-            raise FileNotFoundError(f"Dump file not found: {dump_path}")
+        dump_path = dump_path.expanduser().resolve()
+        self._validate_path_job(dump_path)
         job_id = uuid4().hex
         input_name = self._clean_input_name(dump_path.name)
         self.store.create_job(
@@ -53,15 +52,24 @@ class SplitterService:
         job_id = uuid4().hex
         raw_name = upload.filename or f"{job_id}.sql"
         safe_name = self._clean_input_name(raw_name)
+        self._validate_sql_filename(safe_name)
         target_dir = self.config.uploads_dir / job_id
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / safe_name
-        with target_path.open("wb") as handle:
-            while True:
-                chunk = upload.file.read(1024 * 1024)
-                if not chunk:
-                    break
-                handle.write(chunk)
+        bytes_written = 0
+        try:
+            with target_path.open("wb") as handle:
+                while True:
+                    chunk = upload.file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if self.config.max_upload_bytes > 0 and bytes_written > self.config.max_upload_bytes:
+                        raise ValueError(f"Upload exceeds maximum size of {self.config.max_upload_bytes} bytes")
+                    handle.write(chunk)
+        except Exception:
+            target_path.unlink(missing_ok=True)
+            raise
         self.store.create_job(
             job_id=job_id,
             source_path=str(target_path),
@@ -82,7 +90,8 @@ class SplitterService:
             output_root = job_root / "output"
             output_root.mkdir(parents=True, exist_ok=True)
             job = self.store.get_job(job_id)
-            split_result = self.engine.split_dump(
+            engine = DumpSplitterEngine(self.config)
+            split_result = engine.split_dump(
                 source_path,
                 output_root,
                 progress_callback=lambda percent, stage, step, processed, objects: self.store.update_progress(
@@ -262,3 +271,27 @@ class SplitterService:
         if psutil is None:
             return None
         return int(psutil.Process(os.getpid()).memory_info().rss)
+
+    def _validate_path_job(self, dump_path: Path) -> None:
+        if not self.config.allow_path_jobs:
+            raise PermissionError("Path-based jobs are disabled by configuration")
+        if not dump_path.exists() or not dump_path.is_file():
+            raise FileNotFoundError(f"Dump file not found: {dump_path}")
+        self._validate_sql_filename(dump_path.name)
+        allowed_roots = tuple(root.expanduser().resolve() for root in self.config.allowed_path_roots)
+        if allowed_roots and not any(self._is_relative_to(dump_path, root) for root in allowed_roots):
+            roots = ", ".join(str(root) for root in allowed_roots)
+            raise PermissionError(f"Dump path must be inside an allowed root: {roots}")
+
+    @staticmethod
+    def _validate_sql_filename(filename: str) -> None:
+        if not filename.lower().endswith(".sql"):
+            raise ValueError("Only .sql files are accepted")
+
+    @staticmethod
+    def _is_relative_to(path: Path, root: Path) -> bool:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            return False
