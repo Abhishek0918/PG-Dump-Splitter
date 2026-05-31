@@ -1,11 +1,16 @@
 const STORAGE = {
+  authUsers: "pgsplit.auth.users",
+  authSession: "pgsplit.auth.session",
   theme: "pgsplit.theme",
   layout: "pgsplit.layout",
   pins: "pgsplit.pins",
   compactJobs: "pgsplit.compactJobs",
+  focusMode: "pgsplit.focusMode",
 };
 
 const state = {
+  currentUser: null,
+  workspaceStarted: false,
   inputMode: "path",
   activeView: "overview",
   jobId: null,
@@ -39,16 +44,44 @@ const state = {
   metricsSamples: [],
   pins: loadJson(STORAGE.pins, []),
   compactJobs: localStorage.getItem(STORAGE.compactJobs) === "1",
+  focusMode: localStorage.getItem(STORAGE.focusMode) === "1",
 };
 
 const elements = {
   root: document.documentElement,
+  authScreen: document.getElementById("auth-screen"),
+  authTitle: document.getElementById("auth-title"),
+  authCopy: document.getElementById("auth-copy"),
+  loginTab: document.getElementById("auth-login-tab"),
+  signupTab: document.getElementById("auth-signup-tab"),
+  loginForm: document.getElementById("login-form"),
+  signupForm: document.getElementById("signup-form"),
+  loginEmail: document.getElementById("login-email"),
+  loginPassword: document.getElementById("login-password"),
+  rememberUser: document.getElementById("remember-user"),
+  signupName: document.getElementById("signup-name"),
+  signupEmail: document.getElementById("signup-email"),
+  signupPassword: document.getElementById("signup-password"),
+  signupConfirm: document.getElementById("signup-confirm"),
+  passwordStrengthBar: document.getElementById("password-strength-bar"),
+  passwordStrengthLabel: document.getElementById("password-strength-label"),
+  switchToSignup: document.getElementById("switch-to-signup"),
+  switchToLogin: document.getElementById("switch-to-login"),
+  clearLocalUsers: document.getElementById("clear-local-users"),
+  authMessage: document.getElementById("auth-message"),
+  shell: document.querySelector(".ide-shell"),
   workspace: document.getElementById("workspace"),
   activeJobLabel: document.getElementById("active-job-label"),
   themeSelect: document.getElementById("theme-select"),
   refreshJobs: document.getElementById("refresh-jobs"),
   manifestLink: document.getElementById("manifest-link"),
   downloadLink: document.getElementById("download-link"),
+  focusToggle: document.getElementById("focus-toggle"),
+  inspectorToggle: document.getElementById("inspector-toggle"),
+  logoutButton: document.getElementById("logout-button"),
+  userChip: document.getElementById("user-chip"),
+  userInitials: document.getElementById("user-initials"),
+  userName: document.getElementById("user-name"),
   globalSearch: document.getElementById("global-search"),
   commandOpen: document.getElementById("command-open"),
   modePath: document.getElementById("mode-path"),
@@ -152,15 +185,33 @@ async function requestJson(url, options = {}) {
 
 function initialize() {
   applyTheme(localStorage.getItem(STORAGE.theme) || "system");
-  applyLayout(loadJson(STORAGE.layout, {}));
+  applyLayout(loadLayoutPreference());
+  applyFocusMode(state.focusMode);
   setInputMode("path");
   setActiveView("overview");
   bindEvents();
+  setAuthMode("login");
   renderEmptyStates();
-  loadJobs();
+  const user = getSessionUser();
+  if (user) {
+    enterWorkspace(user);
+  } else {
+    showAuthScreen();
+  }
 }
 
 function bindEvents() {
+  elements.loginTab.addEventListener("click", () => setAuthMode("login"));
+  elements.signupTab.addEventListener("click", () => setAuthMode("signup"));
+  elements.switchToSignup.addEventListener("click", () => setAuthMode("signup"));
+  elements.switchToLogin.addEventListener("click", () => setAuthMode("login"));
+  elements.loginForm.addEventListener("submit", submitLogin);
+  elements.signupForm.addEventListener("submit", submitSignup);
+  elements.signupPassword.addEventListener("input", renderPasswordStrength);
+  elements.clearLocalUsers.addEventListener("click", resetLocalAccounts);
+  document.querySelectorAll("[data-toggle-password]").forEach((button) => {
+    button.addEventListener("click", () => togglePasswordVisibility(button));
+  });
   elements.themeSelect.addEventListener("change", () => applyTheme(elements.themeSelect.value));
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     if ((localStorage.getItem(STORAGE.theme) || "system") === "system") {
@@ -172,6 +223,9 @@ function bindEvents() {
   elements.pathForm.addEventListener("submit", submitPath);
   elements.uploadForm.addEventListener("submit", submitUpload);
   elements.refreshJobs.addEventListener("click", loadJobs);
+  elements.focusToggle.addEventListener("click", () => applyFocusMode(!state.focusMode));
+  elements.inspectorToggle.addEventListener("click", () => togglePane("right"));
+  elements.logoutButton.addEventListener("click", logout);
   elements.globalSearch.addEventListener("input", (event) => {
     state.globalSearch = event.target.value.trim();
     if (state.globalSearch) setActiveView("overview");
@@ -239,6 +293,260 @@ function bindEvents() {
   bindResizer(document.getElementById("console-resizer"), "console");
 }
 
+function setAuthMode(mode) {
+  const isSignup = mode === "signup";
+  elements.loginTab.classList.toggle("active", !isSignup);
+  elements.signupTab.classList.toggle("active", isSignup);
+  elements.loginForm.classList.toggle("active", !isSignup);
+  elements.signupForm.classList.toggle("active", isSignup);
+  elements.authTitle.textContent = isSignup ? "Create your local account" : "Sign in to continue";
+  elements.authCopy.textContent = isSignup
+    ? "Your account is saved only in this browser. Nothing is uploaded to a user database."
+    : "Accounts are stored only in this browser using local storage. Use this for local/demo access, not production security.";
+  clearAuthMessage();
+  window.setTimeout(() => (isSignup ? elements.signupName : elements.loginEmail).focus(), 0);
+}
+
+async function submitSignup(event) {
+  event.preventDefault();
+  clearAuthMessage();
+  const name = elements.signupName.value.trim();
+  const email = normalizeEmail(elements.signupEmail.value);
+  const password = elements.signupPassword.value;
+  const confirm = elements.signupConfirm.value;
+  if (!name) return showAuthMessage("Enter your name.", "error");
+  if (!isValidEmail(email)) return showAuthMessage("Enter a valid email address.", "error");
+  if (password.length < 8) return showAuthMessage("Password must be at least 8 characters.", "error");
+  if (password !== confirm) return showAuthMessage("Passwords do not match.", "error");
+  const users = loadAuthUsers();
+  if (users[email]) return showAuthMessage("A local account already exists for this email.", "error");
+  const passwordRecord = await createPasswordRecord(password);
+  const user = {
+    name,
+    email,
+    created_at: new Date().toISOString(),
+    ...passwordRecord,
+  };
+  users[email] = user;
+  saveAuthUsers(users);
+  saveSession(email, true);
+  showAuthMessage("Account created. Opening your workspace...", "success");
+  window.setTimeout(() => enterWorkspace(user), 250);
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  clearAuthMessage();
+  const email = normalizeEmail(elements.loginEmail.value);
+  const password = elements.loginPassword.value;
+  if (!isValidEmail(email)) return showAuthMessage("Enter a valid email address.", "error");
+  if (!password) return showAuthMessage("Enter your password.", "error");
+  const users = loadAuthUsers();
+  const user = users[email];
+  if (!user) return showAuthMessage("No local account found for that email.", "error");
+  const isValid = await verifyPassword(password, user);
+  if (!isValid) return showAuthMessage("Password is incorrect.", "error");
+  saveSession(email, elements.rememberUser.checked);
+  showAuthMessage("Login successful. Loading workspace...", "success");
+  window.setTimeout(() => enterWorkspace(user), 180);
+}
+
+function showAuthScreen() {
+  stopPolling();
+  state.currentUser = null;
+  elements.shell.classList.add("hidden");
+  elements.authScreen.classList.remove("hidden");
+  window.setTimeout(() => elements.loginEmail.focus(), 0);
+}
+
+function enterWorkspace(user) {
+  state.currentUser = user;
+  elements.authScreen.classList.add("hidden");
+  elements.shell.classList.remove("hidden");
+  renderCurrentUser();
+  if (!state.workspaceStarted) {
+    state.workspaceStarted = true;
+    loadJobs();
+  } else {
+    loadJobs(false);
+  }
+}
+
+function logout() {
+  localStorage.removeItem(STORAGE.authSession);
+  sessionStorage.removeItem(STORAGE.authSession);
+  showAuthScreen();
+  showAuthMessage("You have been logged out from this browser session.", "success");
+}
+
+function renderCurrentUser() {
+  const user = state.currentUser || {};
+  elements.userName.textContent = user.name || user.email || "Local user";
+  elements.userInitials.textContent = initialsFor(user.name || user.email || "LU");
+  elements.userChip.title = user.email || "Local user";
+}
+
+function getSessionUser() {
+  const session = loadJson(STORAGE.authSession, null) || loadSessionJson(STORAGE.authSession, null);
+  if (!session?.email) return null;
+  const users = loadAuthUsers();
+  return users[normalizeEmail(session.email)] || null;
+}
+
+function saveSession(email, remember) {
+  const session = {
+    email: normalizeEmail(email),
+    created_at: new Date().toISOString(),
+    remember: Boolean(remember),
+  };
+  localStorage.removeItem(STORAGE.authSession);
+  sessionStorage.removeItem(STORAGE.authSession);
+  const storage = remember ? localStorage : sessionStorage;
+  storage.setItem(STORAGE.authSession, JSON.stringify(session));
+}
+
+function loadAuthUsers() {
+  const users = loadJson(STORAGE.authUsers, {});
+  return users && typeof users === "object" ? users : {};
+}
+
+function saveAuthUsers(users) {
+  localStorage.setItem(STORAGE.authUsers, JSON.stringify(users));
+}
+
+async function createPasswordRecord(password) {
+  const salt = randomSalt();
+  return { password_hash: await hashPassword(password, salt), password_salt: salt, hash_version: "pbkdf2-sha256" };
+}
+
+async function verifyPassword(password, user) {
+  const hash = await hashPassword(password, user.password_salt || "");
+  return safeEqual(hash, user.password_hash || "");
+}
+
+async function hashPassword(password, salt) {
+  if (window.crypto?.subtle && window.TextEncoder) {
+    const encoder = new TextEncoder();
+    const keyMaterial = await window.crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+    const bits = await window.crypto.subtle.deriveBits(
+      { name: "PBKDF2", salt: base64ToBytes(salt), iterations: 120000, hash: "SHA-256" },
+      keyMaterial,
+      256,
+    );
+    return bytesToBase64(new Uint8Array(bits));
+  }
+  return fallbackHash(`${salt}:${password}`);
+}
+
+function randomSalt() {
+  const bytes = new Uint8Array(16);
+  if (window.crypto?.getRandomValues) window.crypto.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  return bytesToBase64(bytes);
+}
+
+function togglePasswordVisibility(button) {
+  const input = document.getElementById(button.dataset.togglePassword);
+  if (!input) return;
+  const isPassword = input.type === "password";
+  input.type = isPassword ? "text" : "password";
+  button.textContent = isPassword ? "Hide" : "Show";
+}
+
+function renderPasswordStrength() {
+  const password = elements.signupPassword.value;
+  const score = passwordStrength(password);
+  const percent = [0, 18, 42, 72, 100][score];
+  elements.passwordStrengthBar.style.width = `${percent}%`;
+  elements.passwordStrengthBar.className = score >= 4 ? "strong" : score >= 3 ? "medium" : "";
+  elements.passwordStrengthLabel.textContent = strengthLabel(score);
+}
+
+function passwordStrength(password) {
+  let score = 0;
+  if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
+  if (/\d/.test(password)) score += 1;
+  if (/[^A-Za-z0-9]/.test(password)) score += 1;
+  return Math.min(score, 4);
+}
+
+function strengthLabel(score) {
+  if (score >= 4) return "Strong password.";
+  if (score === 3) return "Good password. Add length or symbols for extra strength.";
+  if (score > 0) return "Weak password. Use 8+ characters with letters, numbers, and symbols.";
+  return "Use 8+ characters with letters, numbers, and symbols.";
+}
+
+function resetLocalAccounts() {
+  const confirmed = window.confirm("Reset all local accounts in this browser? This will not delete split jobs or output files.");
+  if (!confirmed) return;
+  localStorage.removeItem(STORAGE.authUsers);
+  localStorage.removeItem(STORAGE.authSession);
+  sessionStorage.removeItem(STORAGE.authSession);
+  elements.loginForm.reset();
+  elements.signupForm.reset();
+  renderPasswordStrength();
+  setAuthMode("signup");
+  showAuthMessage("Local accounts were reset. Create a new account to continue.", "success");
+}
+
+function showAuthMessage(message, type = "info") {
+  elements.authMessage.textContent = message;
+  elements.authMessage.className = `auth-message ${type}`;
+}
+
+function clearAuthMessage() {
+  elements.authMessage.textContent = "";
+  elements.authMessage.className = "auth-message";
+}
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function initialsFor(value) {
+  const parts = String(value || "Local User").trim().split(/\s+/).filter(Boolean);
+  const initials = parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : String(parts[0] || "LU").slice(0, 2);
+  return initials.toUpperCase();
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value || "");
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function fallbackHash(value) {
+  let hashA = 0xdeadbeef;
+  let hashB = 0x41c6ce57;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value.charCodeAt(index);
+    hashA = Math.imul(hashA ^ char, 2654435761);
+    hashB = Math.imul(hashB ^ char, 1597334677);
+  }
+  hashA = Math.imul(hashA ^ (hashA >>> 16), 2246822507) ^ Math.imul(hashB ^ (hashB >>> 13), 3266489909);
+  hashB = Math.imul(hashB ^ (hashB >>> 16), 2246822507) ^ Math.imul(hashA ^ (hashA >>> 13), 3266489909);
+  return `fallback-${(hashB >>> 0).toString(16)}${(hashA >>> 0).toString(16)}`;
+}
+
+function safeEqual(left, right) {
+  if (left.length !== right.length) return false;
+  let result = 0;
+  for (let index = 0; index < left.length; index += 1) result |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  return result === 0;
+}
+
 function bindTab(element, view) {
   element.addEventListener("click", () => setActiveView(view));
 }
@@ -251,23 +559,42 @@ function applyTheme(mode) {
 }
 
 function applyLayout(layout) {
+  const rightCollapsed = layout.rightCollapsed === undefined ? true : Boolean(layout.rightCollapsed);
   if (layout.leftWidth) elements.root.style.setProperty("--left-width", `${layout.leftWidth}px`);
   if (layout.rightWidth) elements.root.style.setProperty("--right-width", `${layout.rightWidth}px`);
   if (layout.consoleHeight) elements.root.style.setProperty("--console-height", `${layout.consoleHeight}px`);
   elements.workspace.classList.toggle("left-collapsed", Boolean(layout.leftCollapsed));
-  elements.workspace.classList.toggle("right-collapsed", Boolean(layout.rightCollapsed));
+  elements.workspace.classList.toggle("right-collapsed", rightCollapsed);
+  elements.inspectorToggle.classList.toggle("active", !rightCollapsed);
+  elements.inspectorToggle.textContent = rightCollapsed ? "Inspector" : "Hide Inspector";
 }
 
 function saveLayout(patch) {
-  const layout = { ...loadJson(STORAGE.layout, {}), ...patch };
+  const layout = { ...loadLayoutPreference(), ...patch, uiVersion: 2 };
   localStorage.setItem(STORAGE.layout, JSON.stringify(layout));
   applyLayout(layout);
 }
 
-function togglePane(side) {
+function loadLayoutPreference() {
   const layout = loadJson(STORAGE.layout, {});
+  if (layout.uiVersion === 2) return layout;
+  const migrated = { ...layout, rightCollapsed: true, consoleHeight: 138, uiVersion: 2 };
+  localStorage.setItem(STORAGE.layout, JSON.stringify(migrated));
+  return migrated;
+}
+
+function togglePane(side) {
   const key = side === "left" ? "leftCollapsed" : "rightCollapsed";
-  saveLayout({ [key]: !layout[key] });
+  const isCollapsed = elements.workspace.classList.contains(`${side}-collapsed`);
+  saveLayout({ [key]: !isCollapsed });
+}
+
+function applyFocusMode(enabled) {
+  state.focusMode = Boolean(enabled);
+  localStorage.setItem(STORAGE.focusMode, state.focusMode ? "1" : "0");
+  elements.shell.classList.toggle("focus-mode", state.focusMode);
+  elements.focusToggle.classList.toggle("active", state.focusMode);
+  elements.focusToggle.textContent = state.focusMode ? "Exit Focus" : "Focus";
 }
 
 function bindResizer(handle, pane) {
@@ -992,6 +1319,7 @@ async function selectObject(objectId) {
     renderBreadcrumb();
     await loadSqlPreview(objectId);
     setActiveView("sql");
+    if (!state.focusMode) saveLayout({ rightCollapsed: false });
     renderNavigator();
     renderFiles();
   } catch (error) {
@@ -1399,6 +1727,14 @@ function clamp(value, min, max) {
 function loadJson(key, fallback) {
   try {
     return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
+  } catch {
+    return fallback;
+  }
+}
+
+function loadSessionJson(key, fallback) {
+  try {
+    return JSON.parse(sessionStorage.getItem(key) || JSON.stringify(fallback));
   } catch {
     return fallback;
   }

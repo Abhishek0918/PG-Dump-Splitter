@@ -7,7 +7,87 @@
   <link rel="stylesheet" href="/ui/styles.css" />
 </head>
 <body>
-  <div class="ide-shell">
+  <section id="auth-screen" class="auth-screen">
+    <div class="auth-visual">
+      <div class="auth-brand">
+        <div class="brand-mark auth-mark">PG</div>
+        <div>
+          <h1>PG Dump Splitter</h1>
+          <p>Local workspace for splitting, exploring, and restoring PostgreSQL dumps.</p>
+        </div>
+      </div>
+      <div class="auth-points">
+        <span>Local users</span>
+        <span>No external database</span>
+        <span>Browser-only session</span>
+      </div>
+    </div>
+
+    <div class="auth-card">
+      <div class="auth-card-header">
+        <span class="eyebrow">Private workspace</span>
+        <h2 id="auth-title">Sign in to continue</h2>
+        <p id="auth-copy">Accounts are stored only in this browser using local storage. Use this for local/demo access, not production security.</p>
+      </div>
+
+      <div class="segmented auth-tabs" role="tablist" aria-label="Authentication mode">
+        <button id="auth-login-tab" class="segment active" type="button">Login</button>
+        <button id="auth-signup-tab" class="segment" type="button">Sign up</button>
+      </div>
+
+      <form id="login-form" class="auth-form active" novalidate>
+        <label for="login-email">Email</label>
+        <input id="login-email" type="email" autocomplete="email" placeholder="you@example.com" required />
+        <label for="login-password">Password</label>
+        <div class="password-field">
+          <input id="login-password" type="password" autocomplete="current-password" placeholder="Your password" required />
+          <button class="password-toggle" type="button" data-toggle-password="login-password">Show</button>
+        </div>
+        <div class="auth-form-row">
+          <label class="check-row">
+            <input id="remember-user" type="checkbox" checked />
+            <span>Keep me signed in locally</span>
+          </label>
+          <button id="switch-to-signup" class="link-button" type="button">Create account</button>
+        </div>
+        <button class="run-button auth-submit" type="submit">Login</button>
+      </form>
+
+      <form id="signup-form" class="auth-form" novalidate>
+        <label for="signup-name">Name</label>
+        <input id="signup-name" type="text" autocomplete="name" placeholder="Your name" required />
+        <label for="signup-email">Email</label>
+        <input id="signup-email" type="email" autocomplete="email" placeholder="you@example.com" required />
+        <label for="signup-password">Password</label>
+        <div class="password-field">
+          <input id="signup-password" type="password" autocomplete="new-password" placeholder="At least 8 characters" required />
+          <button class="password-toggle" type="button" data-toggle-password="signup-password">Show</button>
+        </div>
+        <div class="strength-meter" aria-live="polite">
+          <span id="password-strength-bar"></span>
+        </div>
+        <p id="password-strength-label" class="auth-hint">Use 8+ characters with letters, numbers, and symbols.</p>
+        <label for="signup-confirm">Confirm password</label>
+        <div class="password-field">
+          <input id="signup-confirm" type="password" autocomplete="new-password" placeholder="Repeat password" required />
+          <button class="password-toggle" type="button" data-toggle-password="signup-confirm">Show</button>
+        </div>
+        <div class="auth-form-row">
+          <span class="auth-hint">Already have a local account?</span>
+          <button id="switch-to-login" class="link-button" type="button">Login instead</button>
+        </div>
+        <button class="run-button auth-submit" type="submit">Create Account</button>
+      </form>
+
+      <div id="auth-message" class="auth-message"></div>
+      <div class="auth-footer">
+        <span>Local-only auth</span>
+        <button id="clear-local-users" class="link-button danger" type="button">Reset local accounts</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="app-shell" class="ide-shell hidden">
     <header class="ide-toolbar">
       <div class="brand">
         <div class="brand-mark">PG</div>
@@ -33,14 +113,21 @@
       </div>
 
       <div class="toolbar-actions">
+        <div id="user-chip" class="user-chip" title="Local user">
+          <span id="user-initials">--</span>
+          <strong id="user-name">Local user</strong>
+        </div>
         <select id="theme-select" aria-label="Theme">
           <option value="system">System</option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
         </select>
+        <button id="focus-toggle" type="button" class="tool-button">Focus</button>
+        <button id="inspector-toggle" type="button" class="tool-button">Inspector</button>
         <button id="refresh-jobs" type="button" class="tool-button">Refresh</button>
         <a id="manifest-link" class="tool-link disabled" href="#" target="_blank" rel="noopener" aria-disabled="true">Manifest</a>
         <a id="download-link" class="tool-link disabled primary" href="#" aria-disabled="true">Download</a>
+        <button id="logout-button" type="button" class="tool-button">Logout</button>
       </div>
     </header>
 
@@ -50,23 +137,6 @@
           <h2>Navigator</h2>
           <button id="collapse-left" class="icon-control" type="button" title="Collapse navigator">&lt;</button>
         </div>
-
-        <section class="source-box">
-          <div class="segmented" role="tablist" aria-label="Input method">
-            <button id="mode-path" class="segment active" type="button">Path</button>
-            <button id="mode-upload" class="segment" type="button">File</button>
-          </div>
-          <form id="path-form" class="input-form active">
-            <label for="dump-path">SQL dump path</label>
-            <input id="dump-path" type="text" placeholder="C:\Users\abhishek.singh\Downloads\dump.sql" />
-            <button id="path-submit" class="run-button" type="submit">Start Split</button>
-          </form>
-          <form id="upload-form" class="input-form">
-            <label for="dump-file">SQL dump file</label>
-            <input id="dump-file" type="file" accept=".sql" />
-            <button id="upload-submit" class="run-button" type="submit">Upload & Process</button>
-          </form>
-        </section>
 
         <section class="navigator-section">
           <div class="section-line">
@@ -93,6 +163,34 @@
         <section id="message" class="message"></section>
 
         <div id="overview-view" class="workbench-view active">
+          <section class="quick-start-card">
+            <div class="quick-start-copy">
+              <span class="eyebrow">New split</span>
+              <h2>Process a PostgreSQL dump</h2>
+              <p>Choose a local path or upload a small SQL file. Progress, logs, output files, restore scripts, and previews will appear in this workspace.</p>
+            </div>
+            <div class="quick-start-controls">
+              <div class="segmented" role="tablist" aria-label="Input method">
+                <button id="mode-path" class="segment active" type="button">Use path</button>
+                <button id="mode-upload" class="segment" type="button">Upload file</button>
+              </div>
+              <form id="path-form" class="input-form active">
+                <label for="dump-path">SQL dump path</label>
+                <div class="inline-submit">
+                  <input id="dump-path" type="text" placeholder="C:\Users\abhishek.singh\Downloads\dump.sql" />
+                  <button id="path-submit" class="run-button" type="submit">Start Split</button>
+                </div>
+              </form>
+              <form id="upload-form" class="input-form">
+                <label for="dump-file">SQL dump file</label>
+                <div class="inline-submit">
+                  <input id="dump-file" type="file" accept=".sql" />
+                  <button id="upload-submit" class="run-button" type="submit">Upload & Process</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
           <section id="search-results-panel" class="search-results-panel hidden">
             <div class="panel-title">
               <div>
