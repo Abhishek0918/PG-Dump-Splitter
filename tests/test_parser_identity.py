@@ -2,7 +2,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from app.parser.pg_dump_parser import PgDumpParser
+from pgsplit.parser.pg_dump_parser import PgDumpParser
 
 
 def _test_dir() -> Path:

@@ -1,7 +1,7 @@
-from app.dependency.graph_builder import DependencyGraph
-from app.dependency.restore_order import grouped_restore_order
-from app.models.metadata import DumpObject
-from app.models.object_types import ObjectType
+from pgsplit.dependency.graph_builder import DependencyGraph
+from pgsplit.dependency.restore_order import grouped_restore_order
+from pgsplit.models.metadata import DumpObject
+from pgsplit.models.object_types import ObjectType
 
 
 def test_restore_order_respects_dependencies_and_type_priority() -> None:

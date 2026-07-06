@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from app.db import SQLiteStore
+from pgsplit.storage import SQLiteStore
 
 
 def _test_dir() -> Path:

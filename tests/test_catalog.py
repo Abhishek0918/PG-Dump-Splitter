@@ -1,6 +1,6 @@
-from app.catalog import build_catalog_payload, build_dbeaver_navigator
-from app.models.metadata import DumpObject
-from app.models.object_types import ObjectType
+from pgsplit.core.catalog import build_catalog_payload, build_dbeaver_navigator
+from pgsplit.models.metadata import DumpObject
+from pgsplit.models.object_types import ObjectType
 
 
 def _objects() -> list[DumpObject]:

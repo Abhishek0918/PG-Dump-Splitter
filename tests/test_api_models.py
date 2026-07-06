@@ -1,4 +1,4 @@
-from app.api_models import JobResponse
+from pgsplit.api.schemas import JobResponse
 
 
 def test_job_response_includes_progress_and_transaction_fields() -> None:

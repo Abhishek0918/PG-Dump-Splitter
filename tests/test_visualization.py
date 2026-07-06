@@ -1,6 +1,6 @@
-from app.models.metadata import DumpObject
-from app.models.object_types import ObjectType
-from app.visualization import build_visualization_payload
+from pgsplit.models.metadata import DumpObject
+from pgsplit.models.object_types import ObjectType
+from pgsplit.visualization.builder import build_visualization_payload
 
 
 def test_visualization_payload_builds_table_edges_and_dependency_summary() -> None:

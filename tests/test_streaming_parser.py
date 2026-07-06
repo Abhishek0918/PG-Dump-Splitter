@@ -1,4 +1,4 @@
-from app.parser.lexer import stream_sql_statements
+from pgsplit.parser.lexer import stream_sql_statements
 
 
 def test_stream_sql_statements_handles_dollar_quotes_and_copy() -> None:

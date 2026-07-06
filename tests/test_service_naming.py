@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.config import SplitterConfig
-from app.service import SplitterService
+from pgsplit.core.config import SplitterConfig
+from pgsplit.core.service import SplitterService
 
 
 def _test_dir() -> Path:

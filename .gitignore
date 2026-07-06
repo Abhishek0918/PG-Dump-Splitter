@@ -4,7 +4,10 @@ __pycache__/
 *.pyo
 *.zip
 *.db
+*.tsbuildinfo
+*.egg-info/
 
+var/
 output/
 output_v2/
 runtime/
@@ -13,6 +16,12 @@ logs/
 .pytest_cache/
 .pytest_tmp/
 pytest-cache-files-*/
+
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 sample_v2.sql
 sample_dump.sql

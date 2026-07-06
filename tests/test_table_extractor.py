@@ -1,6 +1,6 @@
-from app.extractor.table_extractor import extract_table_metadata
-from app.models.metadata import DumpObject
-from app.models.object_types import ObjectType
+from pgsplit.extractor.table_extractor import extract_table_metadata
+from pgsplit.models.metadata import DumpObject
+from pgsplit.models.object_types import ObjectType
 
 
 def test_extract_table_metadata_parses_columns_primary_key_and_foreign_key() -> None:

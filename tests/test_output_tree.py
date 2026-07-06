@@ -3,10 +3,10 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from app.models.metadata import DumpObject
-from app.models.object_types import ObjectType
-from app.output_tree import build_output_tree, load_manifest_summary
-from app.output_tree import build_output_tree_from_objects
+from pgsplit.models.metadata import DumpObject
+from pgsplit.models.object_types import ObjectType
+from pgsplit.core.output_tree import build_output_tree, load_manifest_summary
+from pgsplit.core.output_tree import build_output_tree_from_objects
 
 
 def _test_dir() -> Path:

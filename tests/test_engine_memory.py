@@ -3,8 +3,8 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from app.config import SplitterConfig
-from app.engine import DumpSplitterEngine
+from pgsplit.core.config import SplitterConfig
+from pgsplit.core.engine import DumpSplitterEngine
 
 
 def _test_dir() -> Path:

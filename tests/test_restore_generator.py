@@ -2,11 +2,11 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from app.config import SplitterConfig
-from app.models.metadata import DumpObject
-from app.models.object_types import ObjectType
-from app.output_tree import build_augmented_output_tree
-from app.restore_generator import RestoreScriptGenerator, find_restore_script
+from pgsplit.core.config import SplitterConfig
+from pgsplit.models.metadata import DumpObject
+from pgsplit.models.object_types import ObjectType
+from pgsplit.core.output_tree import build_augmented_output_tree
+from pgsplit.restore.generator import RestoreScriptGenerator, find_restore_script
 
 
 def _test_dir() -> Path:

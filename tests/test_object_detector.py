@@ -1,5 +1,5 @@
-from app.models.object_types import ObjectType
-from app.parser.object_detector import detect_object
+from pgsplit.models.object_types import ObjectType
+from pgsplit.parser.object_detector import detect_object
 
 
 def test_detect_table_with_if_not_exists() -> None:

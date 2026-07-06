@@ -2,9 +2,9 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from app.db import SQLiteStore
-from app.models.metadata import DumpObject
-from app.models.object_types import ObjectType
+from pgsplit.storage import SQLiteStore
+from pgsplit.models.metadata import DumpObject
+from pgsplit.models.object_types import ObjectType
 
 
 def _test_dir() -> Path:
