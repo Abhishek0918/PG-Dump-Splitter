@@ -835,7 +835,7 @@ function DependencyView({ visualization, filter }: { visualization: Visualizatio
           </div>
           <div className="dependent-object-list">
             {dependentObjects.length ? dependentObjects.slice(0, 140).map((item) => (
-              <article className="dependent-object" key={`${item.id}-${item.dependsOn}`}>
+              <article className="dependent-object" key={item.id}>
                 <span className={`tree-icon icon-${item.type}`}>{iconText(item.type)}</span>
                 <div>
                   <strong>{item.id}</strong>
@@ -947,19 +947,58 @@ function buildFkDependencyTree(relationships: ErdRelationship[], filter: string)
   };
 }
 
-function buildDependentObjects(visualization: VisualizationPayload | null, objectType: string, filter: string): Array<{ id: string; type: string; dependsOn: string }> {
+function buildDependentObjects(visualization: VisualizationPayload | null, objectType: string, filter: string): Array<{ id: string; type: string; dependsOn: string; dependencyCount: number }> {
   const nodes = new Map((visualization?.dependency_graph?.nodes || []).map((node) => [node.id, node]));
   const query = filter.trim().toLowerCase();
-  return (visualization?.dependency_graph?.edges || [])
+  const edges = (visualization?.dependency_graph?.edges || [])
     .map((edge) => {
-      const node = nodes.get(edge.target);
-      return { id: edge.target, type: node?.type || "unknown", dependsOn: edge.source };
+      const dependentNode = nodes.get(edge.target);
+      const dependencyNode = nodes.get(edge.source);
+      return {
+        id: edge.target,
+        type: dependentNode?.type || "unknown",
+        dependsOn: edge.source,
+        dependencyFields: [edge.source, dependencyNode?.label, dependencyNode?.schema].map((value) => String(value || "").toLowerCase()),
+        objectFields: [edge.target, dependentNode?.label, dependentNode?.schema, dependentNode?.type].map((value) => String(value || "").toLowerCase()),
+      };
     })
-    .filter((item) => item.type === objectType)
-    .filter((item) => !query || [item.id, item.type, item.dependsOn].some((value) => value.toLowerCase().includes(query)))
+    .filter((item) => item.type === objectType);
+
+  const sourceMatchedEdges = query
+    ? edges.filter((item) => item.dependencyFields.some((value) => value.includes(query)))
+    : edges;
+  const filteredEdges = query && sourceMatchedEdges.length
+    ? sourceMatchedEdges
+    : edges.filter((item) => !query || [...item.dependencyFields, ...item.objectFields].some((value) => value.includes(query)));
+
+  const grouped = new Map<string, { id: string; type: string; dependencies: Set<string> }>();
+  filteredEdges.forEach((edge) => {
+    const row = grouped.get(edge.id) || { id: edge.id, type: edge.type, dependencies: new Set<string>() };
+    if (edge.dependsOn) {
+      row.dependencies.add(edge.dependsOn);
+    }
+    grouped.set(edge.id, row);
+  });
+
+  return [...grouped.values()]
+    .map((row) => {
+      const dependencies = [...row.dependencies].sort((a, b) => a.localeCompare(b));
+      return {
+        id: row.id,
+        type: row.type,
+        dependencyCount: dependencies.length,
+        dependsOn: summarizeDependencies(dependencies),
+      };
+    })
     .sort((a, b) => a.type.localeCompare(b.type) || a.id.localeCompare(b.id));
 }
 
+function summarizeDependencies(dependencies: string[]): string {
+  if (!dependencies.length) return "unknown dependency";
+  const visible = dependencies.slice(0, 3).join(", ");
+  const remaining = dependencies.length - 3;
+  return remaining > 0 ? `${visible} +${remaining} more` : visible;
+}
 function SqlPreview({ selectedObject, sql, query, setQuery }: { selectedObject: DumpObject | null; sql: string; query: string; setQuery: (value: string) => void }) {
   return <><div className="sql-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search SQL" /><button className="tool-button" onClick={() => navigator.clipboard.writeText(sql)}>Copy</button><button className="tool-button" onClick={() => downloadText(`${safeFilename(selectedObject?.name || "object")}.sql`, sql, "text/sql")} disabled={!sql}>Download Source</button><span className="sql-meta">{selectedObject ? `${selectedObject.object_type} | ${selectedObject.schema || "_global"} | ${selectedObject.path || ""}` : "No source selected"}</span></div><pre className="sql-preview"><code dangerouslySetInnerHTML={{ __html: highlightSql(sql, query) }} /></pre></>;
 }

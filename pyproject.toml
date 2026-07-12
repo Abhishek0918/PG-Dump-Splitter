@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pgsplit-enterprise"
-version = "2.1.0"
+version = "2.2.0"
 description = "Streaming PostgreSQL dump splitter with metadata, restore planning, and a local IDE-style UI."
 readme = "README.md"
 requires-python = ">=3.12"

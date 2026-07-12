@@ -1,6 +1,6 @@
 # PGSplit Enterprise
 
-Enterprise PostgreSQL dump splitter with a FastAPI backend, React/Vite UI, streaming parser, metadata catalog, dependency graph, and restore script generation.
+Enterprise PostgreSQL dump splitter with a FastAPI backend, React/Vite UI, streaming parser, metadata catalog, dependency graph, restore script generation, and Git-ready database repository mode for database CI/CD.
 
 ## Capabilities
 
@@ -9,6 +9,7 @@ Enterprise PostgreSQL dump splitter with a FastAPI backend, React/Vite UI, strea
 - Track jobs, progress, events, objects, and generated files in SQLite.
 - Serve a React IDE-style UI from FastAPI after `frontend/dist` is built.
 - Support CLI workflows for validation, splitting, dependency graph inspection, restore planning, and serving the UI/API.
+- Generate deterministic, DataGrip-friendly database repositories with checksums, diffs, CI validation, and tracked migrations.
 
 ## Project Structure
 
@@ -25,6 +26,7 @@ backend/
     writers/          # Split file, folder, and manifest writers
     models/           # Shared domain models
     restore/          # Restore script generation
+    repository/       # Git-ready repository generation, validation, diff, deployment
     visualization/    # ERD/dependency visualization payloads
 frontend/
   src/                # React + TypeScript UI
@@ -39,15 +41,53 @@ var/                 # Ignored runtime/output/log folders
 
 ## Setup
 
+Run these commands from the renamed local project folder:
+
 ```powershell
-python -m venv .venv
+cd "C:\Users\abhishek.singh\Documents\DB Project"
+py -3.13 -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 .\.venv\Scripts\Activate.ps1
-pip install -e .
-npm --prefix frontend install
-npm --prefix frontend run build
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+cd frontend
+npm install
+npm run build
+cd ..
 ```
 
 `pyproject.toml` is the authoritative Python project definition. `requirements.txt` is kept for simple virtualenv compatibility.
+
+### Recreate `.venv` After A Folder Rename
+
+If the project was renamed from `New project` to `DB Project`, recreate `.venv`. Windows virtual environment launchers keep the old absolute path and will fail with messages pointing to `Documents\New project`.
+
+```powershell
+cd "C:\Users\abhishek.singh\Documents\DB Project"
+deactivate
+Remove-Item -Recurse -Force .\.venv
+py -3.13 -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+If `deactivate` says the command does not exist, no environment is currently active. Continue with the next command.
+
+Use quoted paths or relative commands when a folder contains spaces:
+
+```powershell
+& "C:\Users\abhishek.singh\Documents\DB Project\.venv\Scripts\python.exe" -m pgsplit --help
+```
+
+Prefer this after activation:
+
+```powershell
+python -m pgsplit --help
+```
 
 ## Local Development
 
@@ -67,7 +107,8 @@ Run React through Vite while FastAPI serves `/api`:
 
 ```powershell
 python -m pgsplit serve --host 127.0.0.1 --port 8091
-npm --prefix frontend run dev
+cd frontend
+npm run dev
 ```
 
 Open the Vite app:
@@ -83,6 +124,10 @@ If `frontend/dist` is missing, FastAPI returns a setup page with the build comma
 ```powershell
 pgsplit validate "C:\path\dump.sql"
 pgsplit split "C:\path\dump.sql" --output ".\var\output"
+pgsplit repo "C:\path\schema.sql" --output ".\database"
+pgsplit repo-validate ".\database"
+pgsplit repo-diff ".\database-before" ".\database"
+pgsplit repo-deploy ".\database"
 pgsplit graph ".\var\output"
 pgsplit restore ".\var\output" --mode full
 pgsplit serve --host 127.0.0.1 --port 8091
@@ -156,7 +201,23 @@ var/output/
 ```powershell
 python -m pytest -q
 python -m compileall backend tests
-npm --prefix frontend run build
+cd frontend
+npm run build
+cd ..
 ```
 
 Helper scripts are available in `scripts/`.
+
+## Database CI/CD
+
+Database Repository Mode keeps generated schema sources deterministic while preserving developer-owned migration history:
+
+```powershell
+pg_dump --schema-only --no-owner --no-privileges --format=plain --file schema.sql
+pgsplit repo schema.sql --output database
+pgsplit repo-validate database
+```
+
+Open the generated `database/` folder as a Git project in DataGrip. Connect DataGrip directly to RDS/PostgreSQL for live browsing, and use the generated folder for reviewed schema source control.
+
+See [Database Repository Mode](docs/database-repository-mode.md) for the complete DataGrip, RDS, CI, diff, and deployment workflow.

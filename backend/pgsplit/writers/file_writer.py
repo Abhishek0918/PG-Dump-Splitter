@@ -42,7 +42,7 @@ def _safe_file_stem(value: str, max_length: int = MAX_FILE_STEM_LENGTH) -> str:
 
 
 def _safe_object_name(obj: DumpObject) -> str:
-    if obj.object_type == ObjectType.FUNCTION and obj.attributes.get("signature"):
+    if obj.object_type in {ObjectType.FUNCTION, ObjectType.PROCEDURE} and obj.attributes.get("signature"):
         signature = str(obj.attributes["signature"]).strip()
         signature_token = signature[1:-1] if signature.startswith("(") and signature.endswith(")") else signature
         return _safe_file_stem(f"{obj.name}_{signature_token or 'noargs'}")

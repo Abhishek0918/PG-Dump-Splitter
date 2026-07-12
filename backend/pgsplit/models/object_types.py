@@ -13,6 +13,7 @@ class ObjectType(str, Enum):
     CONSTRAINT = "constraints"
     INDEX = "indexes"
     FUNCTION = "functions"
+    PROCEDURE = "procedures"
     TRIGGER = "triggers"
     VIEW = "views"
     MATERIALIZED_VIEW = "materialized_views"
@@ -33,6 +34,7 @@ RESTORE_PRIORITY: list[ObjectType] = [
     ObjectType.CONSTRAINT,
     ObjectType.INDEX,
     ObjectType.FUNCTION,
+    ObjectType.PROCEDURE,
     ObjectType.TRIGGER,
     ObjectType.VIEW,
     ObjectType.MATERIALIZED_VIEW,
@@ -52,6 +54,7 @@ SCHEMA_SCOPED_TYPES: set[ObjectType] = {
     ObjectType.CONSTRAINT,
     ObjectType.INDEX,
     ObjectType.FUNCTION,
+    ObjectType.PROCEDURE,
     ObjectType.TRIGGER,
     ObjectType.VIEW,
     ObjectType.MATERIALIZED_VIEW,

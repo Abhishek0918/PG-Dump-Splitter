@@ -78,6 +78,7 @@ PATTERNS: list[tuple[ObjectType, re.Pattern[str]]] = [
         ),
     ),
     (ObjectType.FUNCTION, re.compile(rf"\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?P<qualified>{QUALIFIED})\s*\(", re.IGNORECASE | re.DOTALL)),
+    (ObjectType.PROCEDURE, re.compile(rf"\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+(?P<qualified>{QUALIFIED})\s*\(", re.IGNORECASE | re.DOTALL)),
     (
         ObjectType.TRIGGER,
         re.compile(
@@ -209,7 +210,7 @@ def detect_object(statement: str, is_copy_data: bool = False) -> DetectedObject:
             return DetectedObject(object_type, object_schema, name, target_table=f"{object_schema}.{table}")
 
         schema, name = _split_qualified(match.group("qualified"))
-        if object_type == ObjectType.FUNCTION:
+        if object_type in {ObjectType.FUNCTION, ObjectType.PROCEDURE}:
             object_schema = schema or "public"
             open_index = statement.find("(", match.end("qualified"))
             signature = _normalize_function_signature(_extract_parenthesized(statement, open_index))

@@ -42,3 +42,12 @@ def test_detect_function_signature_for_overloaded_functions() -> None:
     assert obj.schema == "public"
     assert obj.name == "calculate"
     assert obj.signature == "(input_id integer, label text)"
+
+
+def test_detect_procedure_signature() -> None:
+    statement = "CREATE OR REPLACE PROCEDURE public.refresh_cache(target_id bigint) LANGUAGE sql AS $$ SELECT 1 $$;"
+    obj = detect_object(statement)
+    assert obj.object_type == ObjectType.PROCEDURE
+    assert obj.schema == "public"
+    assert obj.name == "refresh_cache"
+    assert obj.signature == "(target_id bigint)"

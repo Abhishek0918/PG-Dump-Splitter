@@ -9,48 +9,67 @@ This document explains how to start the project locally, how the project is stru
 Open PowerShell inside the project root:
 
 ```powershell
-cd "C:\Users\abhishek.singh\Documents\New project"
+cd "C:\Users\abhishek.singh\Documents\DB Project"
 ```
 
 ### Step 2: Create Or Activate Python Virtual Environment
 
-If `.venv` already exists:
+If `.venv` already exists and was created in this same folder:
 
 ```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 .\.venv\Scripts\Activate.ps1
 ```
 
 If `.venv` does not exist:
 
 ```powershell
-python -m venv .venv
+py -3.13 -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 .\.venv\Scripts\Activate.ps1
 ```
 
+### Recreate `.venv` After Renaming The Folder
+
+If the project folder was renamed, recreate `.venv`. Python virtual environments on Windows store absolute paths, so a `.venv` created under `New project` will break after renaming the folder to `DB Project`.
+
+```powershell
+cd "C:\Users\abhishek.singh\Documents\DB Project"
+deactivate
+Remove-Item -Recurse -Force .\.venv
+py -3.13 -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+If `deactivate` says the command does not exist, it only means no virtual environment is currently active. Continue with the next command.
+
 ### Step 3: Install Backend Dependencies
 
-Recommended editable install:
+Recommended local setup:
 
 ```powershell
-pip install -e .
+python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
-Alternative simple install:
+`pyproject.toml` is the main Python project definition. `requirements.txt` is kept for simple setup compatibility.
 
-```powershell
-pip install -r requirements.txt
-```
+Use `python -m pip ...` instead of bare `pip ...` when recovering from a folder rename. This avoids accidentally using an old broken `pip.exe` launcher.
 
 ### Step 4: Install Frontend Dependencies
 
 ```powershell
-npm --prefix frontend install
+cd frontend
+npm install
 ```
 
 ### Step 5: Build React Frontend
 
 ```powershell
-npm --prefix frontend run build
+npm run build
+cd ..
 ```
 
 ### Step 6: Start Backend Server
@@ -76,7 +95,10 @@ python -m pgsplit serve --host 127.0.0.1 --port 8091
 Run React dev server in another terminal:
 
 ```powershell
-npm --prefix frontend run dev
+cd "C:\Users\abhishek.singh\Documents\DB Project"
+.\.venv\Scripts\Activate.ps1
+cd frontend
+npm run dev
 ```
 
 Open:
@@ -90,7 +112,9 @@ http://127.0.0.1:5173
 ```powershell
 python -m pytest -q
 python -m compileall backend tests
-npm --prefix frontend run build
+cd frontend
+npm run build
+cd ..
 ```
 
 ## 2. Project Structure
@@ -108,6 +132,7 @@ backend/
     writers/
     models/
     restore/
+    repository/
     visualization/
 
 frontend/
@@ -128,15 +153,16 @@ var/
 `backend/pgsplit` contains the Python backend package.
 
 - `api/`: FastAPI routes and API response schemas.
-- `cli/`: command-line commands such as `serve`, `split`, `validate`, `graph`, and `restore`.
+- `cli/`: command-line commands such as `serve`, `split`, `validate`, `graph`, `restore`, `repo`, `repo-validate`, `repo-diff`, and `repo-deploy`.
 - `core/`: main application logic, config, splitter engine, service layer, catalog, output tree, and validation.
 - `parser/`: streaming SQL parser and PostgreSQL dump statement handling.
-- `extractor/`: extracts metadata for schemas, tables, functions, triggers, sequences, enums, extensions, and dependencies.
+- `extractor/`: extracts metadata for schemas, tables, functions, procedures, triggers, sequences, enums, extensions, and dependencies.
 - `dependency/`: dependency graph, foreign-key mapping, restore ordering, and topological sorting.
 - `storage/`: SQLite database store for jobs, job events, objects, migrations, and metadata.
 - `writers/`: writes split SQL files, folders, and manifest files.
 - `models/`: shared Python domain models and object types.
 - `restore/`: generates restore scripts like full restore, schema-only restore, data-only restore, and per-schema restore.
+- `repository/`: generates Git-ready database repositories, validates checksums, compares repository versions, and deploys immutable migrations.
 - `visualization/`: builds payloads for ERD and dependency graph UI views.
 
 ### Frontend
@@ -156,7 +182,7 @@ var/
 
 ### Docs
 
-`docs/` contains architecture and development notes.
+`docs/` contains architecture, development, roadmap, and database repository mode notes.
 
 ### Scripts
 
@@ -172,7 +198,7 @@ var/
 
 ### Tests
 
-`tests/` contains Python unit tests for parser, splitter engine, output tree, restore generator, database progress, object search, visualization, and metadata extraction.
+`tests/` contains Python unit tests for parser, splitter engine, output tree, restore generator, repository mode, database progress, object search, visualization, and metadata extraction.
 
 ### Runtime Data
 
@@ -185,6 +211,27 @@ var/logs/
 ```
 
 These folders are ignored by Git.
+
+### Path And Rename Notes
+
+The current local folder is expected to be:
+
+```text
+C:\Users\abhishek.singh\Documents\DB Project
+```
+
+Because the folder name contains a space, always quote absolute paths in PowerShell:
+
+```powershell
+& "C:\Users\abhishek.singh\Documents\DB Project\.venv\Scripts\python.exe" -m pgsplit --help
+```
+
+Prefer relative commands from the project root whenever possible:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pgsplit --help
+```
 
 ## 3. Project Dependencies
 
@@ -240,7 +287,7 @@ Defined in `frontend/package.json`.
 ### Database And Runtime Storage
 
 - SQLite is used internally for job metadata, progress, events, objects, and file mappings.
-- PostgreSQL is the target database technology for dump parsing, restore planning, and migration planning.
+- PostgreSQL is the target database technology for dump parsing, restore planning, repository generation, and migration planning.
 
 ### Packaging And Deployment
 
@@ -274,6 +321,18 @@ Supports PostgreSQL dump processing:
 - Dependency graph.
 - Console/events.
 - ZIP download.
+
+### Database Repository Mode
+
+Generates a deterministic Git-ready database folder from a PostgreSQL schema dump:
+
+- Stable schema object files.
+- Checksums and manifests.
+- Baseline migration.
+- CI validation scripts.
+- Repository diff command.
+- Immutable migration deploy command.
+- DataGrip-friendly folder structure.
 
 ### Database Migration
 
@@ -318,4 +377,24 @@ Generate restore scripts:
 
 ```powershell
 pgsplit restore ".\var\output" --mode full
+```
+
+Generate a Git-ready database repository:
+
+```powershell
+pg_dump --schema-only --no-owner --no-privileges --format=plain --file schema.sql
+pgsplit repo schema.sql --output database
+pgsplit repo-validate database
+```
+
+Compare two database repositories:
+
+```powershell
+pgsplit repo-diff ".\database-before" ".\database"
+```
+
+Deploy reviewed migrations:
+
+```powershell
+pgsplit repo-deploy ".\database"
 ```

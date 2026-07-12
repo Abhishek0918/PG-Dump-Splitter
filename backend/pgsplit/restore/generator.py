@@ -16,6 +16,7 @@ POST_DATA_TYPES = {
     "constraints",
     "indexes",
     "functions",
+    "procedures",
     "triggers",
     "views",
     "materialized_views",

@@ -82,7 +82,7 @@ class PgDumpParser:
         signature: str | None = None,
     ) -> str:
         prefix = f"{schema}.{name}" if schema else name
-        if object_type == ObjectType.FUNCTION and signature:
+        if object_type in {ObjectType.FUNCTION, ObjectType.PROCEDURE} and signature:
             return f"{prefix}{signature}"
         if object_type == ObjectType.DATA:
             table = target_table or prefix

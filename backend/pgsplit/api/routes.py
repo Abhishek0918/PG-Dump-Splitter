@@ -19,7 +19,7 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
     cfg = config or SplitterConfig()
     service = SplitterService(cfg)
 
-    app = FastAPI(title="PGSplit Enterprise", version="2.1.0")
+    app = FastAPI(title="PGSplit Enterprise", version="2.2.0")
     repo_root = Path(__file__).resolve().parents[3]
     react_dist_dir = repo_root / "frontend" / "dist"
     react_assets_dir = react_dist_dir / "assets"
