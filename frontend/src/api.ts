@@ -33,11 +33,11 @@ export const api = {
     requestJson<SourcePayload>(`/api/jobs/${encodeURIComponent(jobId)}/source?object_id=${encodeURIComponent(objectId)}`),
   search: (jobId: string, query: string) =>
     requestJson<SearchPayload>(`/api/jobs/${encodeURIComponent(jobId)}/search?q=${encodeURIComponent(query)}&limit=80`),
-  submitPath: (dumpPath: string) =>
+  submitPath: (dumpPath: string, repositoryMode = false) =>
     requestJson<JobResponse>("/api/jobs/path", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dump_path: dumpPath })
+      body: JSON.stringify({ dump_path: dumpPath, repository_mode: repositoryMode })
     }),
   restoreScript: (jobId: string, mode: string, schema?: string | null) => {
     const params = new URLSearchParams({ mode, format: "json" });

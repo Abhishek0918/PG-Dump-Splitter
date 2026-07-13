@@ -67,6 +67,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<View>("overview");
   const [inputMode, setInputMode] = useState<InputMode>("path");
   const [dumpPath, setDumpPath] = useState("");
+  const [repositoryMode, setRepositoryMode] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [jobs, setJobs] = useState<JobResponse[]>([]);
@@ -259,7 +260,7 @@ export default function App() {
     setBusy(true);
     setMessage("");
     try {
-      const job = await api.submitPath(dumpPath.trim());
+      const job = await api.submitPath(dumpPath.trim(), repositoryMode);
       setActiveJobState(job);
       await refreshJobs(false);
     } catch (error) {
@@ -278,7 +279,7 @@ export default function App() {
     const formData = new FormData();
     formData.append("file", file);
     const request = new XMLHttpRequest();
-    request.open("POST", "/api/jobs/upload");
+    request.open("POST", `/api/jobs/upload?repository_mode=${repositoryMode}`);
     request.upload.onprogress = (progress) => {
       if (!progress.lengthComputable) return;
       setActiveJob((previous) => ({
@@ -419,7 +420,9 @@ export default function App() {
             <button className={`tool-button ${inspectorOpen ? "active" : ""}`} onClick={() => setInspectorOpen((value) => !value)}>Inspector</button>
             <button className="tool-button" onClick={() => void refreshJobs(false)}>Refresh</button>
             <a className={`tool-link ${completed ? "" : "disabled"}`} href={completed ? `/api/jobs/${activeJobId}/manifest` : "#"} target="_blank" rel="noreferrer">Manifest</a>
-            <a className={`tool-link primary ${completed ? "" : "disabled"}`} href={completed ? `/api/jobs/${activeJobId}/download` : "#"}>Download</a>
+            <a className={`tool-link primary ${completed ? "" : "disabled"}`} href={completed ? `/api/jobs/${activeJobId}/download` : "#"}>
+              {activeJob?.repository_mode ? "Download Git Repo" : "Download"}
+            </a>
           </div>
         </div>
       </header>
@@ -448,6 +451,12 @@ export default function App() {
                 <div className="quick-start-copy"><span className="eyebrow">New split</span><h2>Process a PostgreSQL dump</h2><p>Choose a local path or upload a SQL file. Progress, logs, output files, restore scripts, and previews appear in this workspace.</p></div>
                 <div className="quick-start-controls">
                   <div className="segmented"><button className={`segment ${inputMode === "path" ? "active" : ""}`} onClick={() => setInputMode("path")}>Use path</button><button className={`segment ${inputMode === "upload" ? "active" : ""}`} onClick={() => setInputMode("upload")}>Upload file</button></div>
+                  <div style={{ margin: "14px 0 6px 0" }}>
+                    <label className="check-row" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                      <input type="checkbox" checked={repositoryMode} onChange={(event) => setRepositoryMode(event.target.checked)} disabled={busy} />
+                      <strong>Git repository mode</strong> <small style={{ opacity: 0.7 }}>(Clean CI/CD folders & baseline migration)</small>
+                    </label>
+                  </div>
                   {inputMode === "path" ? <form className="input-form active" onSubmit={submitPath}><label>SQL dump path</label><div className="inline-submit"><input value={dumpPath} onChange={(event) => setDumpPath(event.target.value)} placeholder="C:\\Users\\abhishek.singh\\Downloads\\dump.sql" disabled={busy} /><button className="run-button" disabled={busy}>Start Split</button></div></form> : <form className="input-form active" onSubmit={submitUpload}><label>SQL dump file</label><div className="inline-submit"><input name="dump-file" type="file" accept=".sql" disabled={busy} /><button className="run-button" disabled={busy}>Upload & Process</button></div></form>}
                 </div>
               </section>

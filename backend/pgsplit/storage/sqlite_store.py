@@ -50,6 +50,7 @@ class JobRecord:
     memory_bytes: int | None = None
     objects_processed: int = 0
     events_count: int = 0
+    repository_mode: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +76,7 @@ class JobRecord:
             "memory_bytes": self.memory_bytes,
             "objects_processed": self.objects_processed,
             "events_count": self.events_count,
+            "repository_mode": self.repository_mode,
         }
 
 
@@ -199,6 +201,7 @@ class SQLiteStore:
             "memory_bytes": "INTEGER",
             "objects_processed": "INTEGER NOT NULL DEFAULT 0",
             "events_count": "INTEGER NOT NULL DEFAULT 0",
+            "repository_mode": "INTEGER NOT NULL DEFAULT 0",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -249,6 +252,7 @@ class SQLiteStore:
         source_type: str = "path",
         input_name: str | None = None,
         file_size_bytes: int = 0,
+        repository_mode: bool = False,
     ) -> None:
         created_at = _utc_now()
         with self._lock, self._connect() as connection:
@@ -265,9 +269,10 @@ class SQLiteStore:
                     processed_bytes,
                     progress_percent,
                     stage,
-                    current_step
+                    current_step,
+                    repository_mode
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -281,6 +286,7 @@ class SQLiteStore:
                     0,
                     "queued",
                     "Waiting to start",
+                    1 if repository_mode else 0,
                 ),
             )
             self._insert_event(
@@ -462,6 +468,7 @@ class SQLiteStore:
             memory_bytes=row["memory_bytes"],
             objects_processed=row["objects_processed"],
             events_count=row["events_count"],
+            repository_mode=bool(row["repository_mode"]),
         )
 
     def replace_objects(self, job_id: str, objects: list[DumpObject]) -> None:
@@ -510,7 +517,7 @@ class SQLiteStore:
                     output_dir, archive_path, object_count, warning_count,
                     source_type, input_name, file_size_bytes, processed_bytes,
                     progress_percent, stage, current_step, duration_seconds,
-                    memory_bytes, objects_processed, events_count
+                    memory_bytes, objects_processed, events_count, repository_mode
                 FROM jobs
                 WHERE job_id = ?
                 """,
@@ -529,7 +536,7 @@ class SQLiteStore:
                     output_dir, archive_path, object_count, warning_count,
                     source_type, input_name, file_size_bytes, processed_bytes,
                     progress_percent, stage, current_step, duration_seconds,
-                    memory_bytes, objects_processed, events_count
+                    memory_bytes, objects_processed, events_count, repository_mode
                 FROM jobs
                 ORDER BY created_at DESC
                 LIMIT ?

@@ -23,6 +23,7 @@ export interface JobResponse {
   memory_bytes?: number | null;
   objects_processed: number;
   events_count: number;
+  repository_mode?: boolean;
 }
 
 export interface JobEvent {

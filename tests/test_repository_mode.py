@@ -176,3 +176,53 @@ def test_repository_deployer_tracks_immutable_migrations() -> None:
     else:
         raise AssertionError("Modified applied migration should fail deployment")
     shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_repository_mode_via_service() -> None:
+    from pgsplit.core.config import SplitterConfig
+    from pgsplit.core.service import SplitterService
+    import time
+
+    workspace = _test_dir()
+    dump = workspace / "schema.sql"
+    dump.write_text(SAMPLE_DUMP, encoding="utf-8")
+    
+    config = SplitterConfig()
+    config.runtime_dir = workspace / "runtime"
+    config.output_dir = workspace / "database"
+    config.ensure_runtime_dirs()
+    
+    service = SplitterService(config)
+    job = service.submit_job_from_path(dump, repository_mode=True)
+    
+    assert job.repository_mode is True
+    assert job.status in ("queued", "running", "completed")
+    
+    # Wait for the job to complete in the background executor thread
+    retries = 30
+    while retries > 0:
+        updated_job = service.get_job(job.job_id)
+        if updated_job and updated_job.status in ("completed", "failed"):
+            job = updated_job
+            break
+        time.sleep(0.1)
+        retries -= 1
+        
+    assert job.status == "completed"
+    assert job.object_count == 6
+    
+    # Verify that manifests are generated in repository layout
+    output_dir = Path(job.output_dir)
+    assert (output_dir / "manifests" / "repository.json").is_file()
+    assert (output_dir / "manifests" / "output_tree.json").is_file()
+    assert (output_dir / "manifests" / "navigator.json").is_file()
+    assert (output_dir / "manifests" / "visualization.json").is_file()
+    assert (output_dir / "migrations" / "0001_baseline.sql").is_file()
+    
+    # Verify explorer is loaded from manifests
+    explorer = service.get_output_explorer(job.job_id)
+    assert explorer["tree"]["name"] == "output"
+    assert explorer["manifest"]["summary"]["objects"] == 6
+    
+    shutil.rmtree(workspace, ignore_errors=True)
+

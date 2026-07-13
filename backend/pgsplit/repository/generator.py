@@ -25,6 +25,8 @@ class RepositoryResult:
     file_count: int
     baseline_created: bool
     included_data: bool
+    objects: list[DumpObject]
+    warnings: list[str]
 
 
 class DatabaseRepositoryGenerator:
@@ -69,6 +71,18 @@ class DatabaseRepositoryGenerator:
                 restore_order,
                 include_data,
             )
+            # Copy UI manifests from split output to repository manifests
+            split_manifest_dir = split_root / "manifest"
+            repo_manifest_dir = generated_root / "manifests"
+            for filename in ("navigator.json", "schema_index.json", "visualization.json", "manifest.json", "statistics.json"):
+                src_file = split_manifest_dir / filename
+                if src_file.exists():
+                    shutil.copy2(src_file, repo_manifest_dir / filename)
+            
+            split_restore_manifest = split_root / "restore" / "restore_manifest.json"
+            if split_restore_manifest.exists():
+                shutil.copy2(split_restore_manifest, repo_manifest_dir / "restore_manifest.json")
+
             self._sync_managed_content(generated_root, output_root, include_data=include_data)
             if progress_callback:
                 progress_callback(97, "repository", "Syncing managed repository folders", dump_size, len(records))
@@ -83,12 +97,26 @@ class DatabaseRepositoryGenerator:
                 progress_callback(98, "repository", "Writing baseline migration and checksums", dump_size, len(records))
             checksums = self._write_checksums(output_root, records)
             self._write_repository_manifest(output_root, records, checksums, include_data)
+
+            # Write final repository output tree
+            from pgsplit.core.output_tree import build_output_tree
+            self._write_json(
+                output_root / "manifests" / "output_tree.json",
+                build_output_tree(output_root)
+            )
+
             if progress_callback:
                 progress_callback(99, "repository", "Repository manifests ready", dump_size, len(records))
         finally:
             shutil.rmtree(temporary_root, ignore_errors=True)
 
         schemas = {str(record["schema"]) for record in records if record.get("schema")}
+        
+        # Update paths of objects to match repository paths
+        for obj in split_result.objects:
+            if obj.path:
+                obj.path = DatabaseRepositoryGenerator._repository_path(obj.path)
+
         return RepositoryResult(
             output_root=output_root,
             object_count=len(records),
@@ -96,6 +124,8 @@ class DatabaseRepositoryGenerator:
             file_count=len(checksums["files"]),
             baseline_created=baseline_created,
             included_data=include_data,
+            objects=split_result.objects,
+            warnings=split_result.warnings,
         )
 
     def _write_managed_repository(

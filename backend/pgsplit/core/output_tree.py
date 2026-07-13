@@ -34,12 +34,12 @@ def build_augmented_output_tree(output_root: Path, objects: list[DumpObject], ex
 
 
 def load_manifest_summary(output_root: Path) -> dict[str, Any]:
-    manifest_dir = output_root / "manifest"
+    manifest_dir = output_root / "manifests" if (output_root / "manifests").exists() else output_root / "manifest"
     summary_path = manifest_dir / "manifest.json"
     statistics_path = manifest_dir / "statistics.json"
     navigator_path = manifest_dir / "navigator.json"
     schema_index_path = manifest_dir / "schema_index.json"
-    restore_manifest_path = output_root / "restore" / "restore_manifest.json"
+    restore_manifest_path = manifest_dir / "restore_manifest.json" if (output_root / "manifests").exists() else output_root / "restore" / "restore_manifest.json"
     summary: dict[str, Any] = {}
     statistics: dict[str, Any] = {}
     navigator: dict[str, Any] = {}
