@@ -1,6 +1,6 @@
 # PGSplit Enterprise Project Document
 
-This document explains how to start the project locally, how the project is structured, what dependencies are required, and which technologies are used.
+This document explains how to start the project locally, how the project is structured, what dependencies are required, which technologies are used, and how the product is evolving into an enterprise PG Dump Analyzer.
 
 ## 1. How To Start The Project
 
@@ -53,8 +53,6 @@ Recommended local setup:
 python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
-
-`pyproject.toml` is the main Python project definition. `requirements.txt` is kept for simple setup compatibility.
 
 Use `python -m pip ...` instead of bare `pip ...` when recovering from a folder rename. This avoids accidentally using an old broken `pip.exe` launcher.
 
@@ -132,7 +130,6 @@ backend/
     writers/
     models/
     restore/
-    repository/
     visualization/
 
 frontend/
@@ -153,16 +150,15 @@ var/
 `backend/pgsplit` contains the Python backend package.
 
 - `api/`: FastAPI routes and API response schemas.
-- `cli/`: command-line commands such as `serve`, `split`, `validate`, `graph`, `restore`, `repo`, `repo-validate`, `repo-diff`, and `repo-deploy`.
+- `cli/`: command-line commands such as `serve`, `split`, `validate`, `graph`, and `restore`.
 - `core/`: main application logic, config, splitter engine, service layer, catalog, output tree, and validation.
 - `parser/`: streaming SQL parser and PostgreSQL dump statement handling.
 - `extractor/`: extracts metadata for schemas, tables, functions, procedures, triggers, sequences, enums, extensions, and dependencies.
 - `dependency/`: dependency graph, foreign-key mapping, restore ordering, and topological sorting.
-- `storage/`: SQLite database store for jobs, job events, objects, migrations, and metadata.
+- `storage/`: SQLite database store for jobs, job events, objects, and metadata.
 - `writers/`: writes split SQL files, folders, and manifest files.
 - `models/`: shared Python domain models and object types.
 - `restore/`: generates restore scripts like full restore, schema-only restore, data-only restore, and per-schema restore.
-- `repository/`: generates Git-ready database repositories, validates checksums, compares repository versions, and deploys immutable migrations.
 - `visualization/`: builds payloads for ERD and dependency graph UI views.
 
 ### Frontend
@@ -172,7 +168,7 @@ var/
 - Login and sign-up page.
 - Post-login workspace page.
 - Profile page.
-- Database Schema Splitter module.
+- Database Schema Splitter / PG Dump Analyzer module.
 - Database Migration planner module.
 - SQL preview, output tree, restore planner, ERD, dependency graph, and console views.
 
@@ -182,7 +178,7 @@ var/
 
 ### Docs
 
-`docs/` contains architecture, development, roadmap, and database repository mode notes.
+`docs/` contains architecture, development, roadmap, and AWS microservice planning notes.
 
 ### Scripts
 
@@ -198,7 +194,7 @@ var/
 
 ### Tests
 
-`tests/` contains Python unit tests for parser, splitter engine, output tree, restore generator, repository mode, database progress, object search, visualization, and metadata extraction.
+`tests/` contains Python unit tests for parser, splitter engine, output tree, restore generator, database progress, object search, visualization, and metadata extraction.
 
 ### Runtime Data
 
@@ -211,27 +207,6 @@ var/logs/
 ```
 
 These folders are ignored by Git.
-
-### Path And Rename Notes
-
-The current local folder is expected to be:
-
-```text
-C:\Users\abhishek.singh\Documents\DB Project
-```
-
-Because the folder name contains a space, always quote absolute paths in PowerShell:
-
-```powershell
-& "C:\Users\abhishek.singh\Documents\DB Project\.venv\Scripts\python.exe" -m pgsplit --help
-```
-
-Prefer relative commands from the project root whenever possible:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pgsplit --help
-```
 
 ## 3. Project Dependencies
 
@@ -270,9 +245,9 @@ Defined in `frontend/package.json`.
 - API: FastAPI
 - Server: Uvicorn
 - CLI: Typer
-- Storage: SQLite
-- SQL Parsing: sqlparse + custom streaming parser
-- Dependency Graph: NetworkX
+- Local metadata storage: SQLite
+- SQL parsing: sqlparse + custom streaming parser
+- Dependency graph: NetworkX
 - Testing: Pytest
 
 ### Frontend
@@ -286,8 +261,8 @@ Defined in `frontend/package.json`.
 
 ### Database And Runtime Storage
 
-- SQLite is used internally for job metadata, progress, events, objects, and file mappings.
-- PostgreSQL is the target database technology for dump parsing, restore planning, repository generation, and migration planning.
+- SQLite is used locally for job metadata, progress, events, objects, and file mappings.
+- PostgreSQL is the target database technology for dump parsing, restore planning, analysis, and migration planning.
 
 ### Packaging And Deployment
 
@@ -307,11 +282,12 @@ The UI starts with a local email/password login and sign-up page. User accounts 
 
 Shows current local user, account type, local auth details, active job information, and workspace summary.
 
-### Database Schema Splitter
+### PG Dump Analyzer / Database Schema Splitter
 
 Supports PostgreSQL dump processing:
 
 - Local path or file upload.
+- Streaming parse and validation.
 - Job progress tracking.
 - Output tree.
 - Object navigator.
@@ -321,18 +297,6 @@ Supports PostgreSQL dump processing:
 - Dependency graph.
 - Console/events.
 - ZIP download.
-
-### Database Repository Mode
-
-Generates a deterministic Git-ready database folder from a PostgreSQL schema dump:
-
-- Stable schema object files.
-- Checksums and manifests.
-- Baseline migration.
-- CI validation scripts.
-- Repository diff command.
-- Immutable migration deploy command.
-- DataGrip-friendly folder structure.
 
 ### Database Migration
 
@@ -379,22 +343,8 @@ Generate restore scripts:
 pgsplit restore ".\var\output" --mode full
 ```
 
-Generate a Git-ready database repository:
+## 7. Target Enterprise Microservice Direction
 
-```powershell
-pg_dump --schema-only --no-owner --no-privileges --format=plain --file schema.sql
-pgsplit repo schema.sql --output database
-pgsplit repo-validate database
-```
+The current local application is intentionally simple. The enterprise target is a microservice system where dump ingestion, parsing, analysis, metadata search, artifact generation, visualization, and notifications are independently deployable services.
 
-Compare two database repositories:
-
-```powershell
-pgsplit repo-diff ".\database-before" ".\database"
-```
-
-Deploy reviewed migrations:
-
-```powershell
-pgsplit repo-deploy ".\database"
-```
+See `docs/aws-microservices-plan.md` for the AWS hosting plan.

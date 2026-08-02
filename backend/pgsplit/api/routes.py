@@ -37,7 +37,7 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
     @app.post("/api/jobs/path", response_model=JobResponse)
     def create_job_from_path(payload: SubmitPathRequest) -> JobResponse:
         try:
-            job = service.submit_job_from_path(Path(payload.dump_path), repository_mode=payload.repository_mode)
+            job = service.submit_job_from_path(Path(payload.dump_path))
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PermissionError as exc:
@@ -47,14 +47,11 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         return _as_job_response(job)
 
     @app.post("/api/jobs/upload", response_model=JobResponse)
-    def create_job_from_upload(
-        file: UploadFile = File(...),
-        repository_mode: bool = Query(default=False),
-    ) -> JobResponse:
+    def create_job_from_upload(file: UploadFile = File(...)) -> JobResponse:
         if not (file.filename or "").lower().endswith(".sql"):
             raise HTTPException(status_code=400, detail="Only .sql files are accepted")
         try:
-            job = service.submit_job_from_upload(file, repository_mode=repository_mode)
+            job = service.submit_job_from_upload(file)
         except ValueError as exc:
             status_code = 413 if "exceeds maximum size" in str(exc) else 400
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
@@ -146,7 +143,7 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         output_dir = service.get_output_dir(job_id)
         if output_dir is None or not output_dir.exists():
             raise HTTPException(status_code=409, detail="Manifest is not ready yet")
-        manifest_path = output_dir / "manifests" / "manifest.json" if (output_dir / "manifests").exists() else output_dir / "manifest" / "manifest.json"
+        manifest_path = output_dir / "manifest" / "manifest.json"
         if not manifest_path.exists():
             raise HTTPException(status_code=404, detail="Manifest file missing")
         return service.get_output_explorer(job_id)["manifest"]

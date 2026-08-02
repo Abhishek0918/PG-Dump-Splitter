@@ -10,10 +10,6 @@ from rich.table import Table
 from pgsplit.core.config import SplitterConfig
 from pgsplit.core.engine import DumpSplitterEngine
 from pgsplit.restore.generator import RestoreScriptGenerator, find_restore_script
-from pgsplit.repository.diff import RepositoryDiff
-from pgsplit.repository.deployer import RepositoryDeployer, RepositoryDeploymentError
-from pgsplit.repository.generator import DatabaseRepositoryGenerator
-from pgsplit.repository.validator import RepositoryValidator
 from pgsplit.core.validator import DumpValidator
 
 app = typer.Typer(help="PGSplit Enterprise CLI")
@@ -37,106 +33,6 @@ def split_dump(
     console.print(f"Split completed for {dump_file}")
     console.print(f"Objects: {len(result.objects)}")
     console.print(f"Output: {output}")
-
-
-@app.command("repo")
-def generate_repository(
-    dump_file: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    output: Path = typer.Option(Path("database"), "--output", "-o"),
-    include_data: bool = typer.Option(
-        False,
-        "--include-data",
-        help="Include COPY blocks under data/reference. Intended only for small reference datasets.",
-    ),
-    force_baseline: bool = typer.Option(
-        False,
-        "--force-baseline",
-        help="Replace migrations/0001_baseline.sql. Existing migrations are otherwise preserved.",
-    ),
-    config: Path | None = typer.Option(None, "--config", "-c"),
-) -> None:
-    """Generate a deterministic, Git-ready PostgreSQL database repository."""
-    cfg = _load_config(config)
-    result = DatabaseRepositoryGenerator(cfg).generate(
-        dump_file,
-        output,
-        include_data=include_data,
-        force_baseline=force_baseline,
-    )
-    console.print("[green]Database repository generated[/green]")
-    console.print(f"Output: {result.output_root}")
-    console.print(
-        f"Objects: {result.object_count} | Schemas: {result.schema_count} | "
-        f"Checksummed files: {result.file_count}"
-    )
-    console.print(
-        "Baseline: "
-        + ("created" if result.baseline_created else "preserved")
-        + " | Data: "
-        + ("included" if result.included_data else "excluded")
-    )
-
-
-@app.command("repo-validate")
-def validate_repository(
-    repository: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
-) -> None:
-    """Validate generated files, checksums, dependencies, and restore order."""
-    report = RepositoryValidator().validate(repository)
-    for warning in report.warnings:
-        console.print(f"[yellow]Warning:[/yellow] {warning}")
-    if not report.ok:
-        for error in report.errors:
-            console.print(f"[red]Error:[/red] {error}")
-        raise typer.Exit(code=1)
-    console.print(
-        f"[green]Repository validation passed[/green] | "
-        f"objects={report.checked_objects} files={report.checked_files} warnings={len(report.warnings)}"
-    )
-
-
-@app.command("repo-deploy")
-def deploy_repository(
-    repository: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
-    psql: str = typer.Option("psql", "--psql", help="psql executable name or path."),
-) -> None:
-    """Validate and apply immutable migrations using PostgreSQL environment variables."""
-    try:
-        result = RepositoryDeployer(psql).deploy(repository)
-    except (RepositoryDeploymentError, OSError) as exc:
-        console.print(f"[red]Deployment failed:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-    for migration in result.applied:
-        console.print(f"[green]Applied:[/green] {migration}")
-    for migration in result.skipped:
-        console.print(f"[dim]Already applied:[/dim] {migration}")
-    console.print(f"Deployment complete | applied={len(result.applied)} skipped={len(result.skipped)}")
-
-
-@app.command("repo-diff")
-def diff_repositories(
-    old_repository: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
-    new_repository: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
-    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-) -> None:
-    """Compare two generated database repositories by object identity and checksum."""
-    result = RepositoryDiff().compare(old_repository, new_repository)
-    if json_output:
-        console.print_json(data=result.to_dict())
-        return
-    table = Table(title="Database Repository Diff")
-    table.add_column("Change")
-    table.add_column("Type")
-    table.add_column("Object")
-    for item in result.added:
-        table.add_row("[green]Added[/green]", str(item.get("object_type") or ""), str(item["object_id"]))
-    for item in result.removed:
-        table.add_row("[red]Removed[/red]", str(item.get("object_type") or ""), str(item["object_id"]))
-    for item in result.changed:
-        table.add_row("[yellow]Changed[/yellow]", str(item.get("object_type") or ""), str(item["object_id"]))
-    if not result.has_changes:
-        table.add_row("Unchanged", "", f"{result.unchanged_count} objects")
-    console.print(table)
 
 
 @app.command("validate")

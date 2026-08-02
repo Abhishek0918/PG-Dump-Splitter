@@ -1,15 +1,19 @@
 # PGSplit Enterprise
 
-Enterprise PostgreSQL dump splitter with a FastAPI backend, React/Vite UI, streaming parser, metadata catalog, dependency graph, restore script generation, and Git-ready database repository mode for database CI/CD.
+Enterprise PostgreSQL dump analyzer with a FastAPI backend, React/Vite UI, streaming parser, metadata catalog, dependency graph, restore script generation, and visual analysis tools for large PostgreSQL dump files.
+
+## Product Direction
+
+PGSplit is now focused on becoming a full PG Dump Analyzer: upload or point to a PostgreSQL dump, stream-parse it safely, split it into explorable objects, analyze dependencies and risk areas, preview SQL, generate restore plans, and surface enterprise-grade insights from the dump.
 
 ## Capabilities
 
 - Stream large plain SQL PostgreSQL dumps without loading the full file into memory.
 - Split schemas, objects, data, manifests, dependency graphs, visualization payloads, and restore assets.
-- Track jobs, progress, events, objects, and generated files in SQLite.
+- Analyze object counts, schemas, dependencies, restore order, warnings, and generated output structure.
+- Track jobs, progress, events, objects, and generated files in SQLite for local development.
 - Serve a React IDE-style UI from FastAPI after `frontend/dist` is built.
 - Support CLI workflows for validation, splitting, dependency graph inspection, restore planning, and serving the UI/API.
-- Generate deterministic, DataGrip-friendly database repositories with checksums, diffs, CI validation, and tracked migrations.
 
 ## Project Structure
 
@@ -26,7 +30,6 @@ backend/
     writers/          # Split file, folder, and manifest writers
     models/           # Shared domain models
     restore/          # Restore script generation
-    repository/       # Git-ready repository generation, validation, diff, deployment
     visualization/    # ERD/dependency visualization payloads
 frontend/
   src/                # React + TypeScript UI
@@ -124,10 +127,6 @@ If `frontend/dist` is missing, FastAPI returns a setup page with the build comma
 ```powershell
 pgsplit validate "C:\path\dump.sql"
 pgsplit split "C:\path\dump.sql" --output ".\var\output"
-pgsplit repo "C:\path\schema.sql" --output ".\database"
-pgsplit repo-validate ".\database"
-pgsplit repo-diff ".\database-before" ".\database"
-pgsplit repo-deploy ".\database"
 pgsplit graph ".\var\output"
 pgsplit restore ".\var\output" --mode full
 pgsplit serve --host 127.0.0.1 --port 8091
@@ -208,16 +207,6 @@ cd ..
 
 Helper scripts are available in `scripts/`.
 
-## Database CI/CD
+## Enterprise Architecture Roadmap
 
-Database Repository Mode keeps generated schema sources deterministic while preserving developer-owned migration history:
-
-```powershell
-pg_dump --schema-only --no-owner --no-privileges --format=plain --file schema.sql
-pgsplit repo schema.sql --output database
-pgsplit repo-validate database
-```
-
-Open the generated `database/` folder as a Git project in DataGrip. Connect DataGrip directly to RDS/PostgreSQL for live browsing, and use the generated folder for reviewed schema source control.
-
-See [Database Repository Mode](docs/database-repository-mode.md) for the complete DataGrip, RDS, CI, diff, and deployment workflow.
+The current local app remains a single deployable product for development. The target enterprise version will split the analyzer into services: UI/API gateway, upload service, job orchestrator, parser workers, metadata service, artifact service, visualization service, and notification/event service. See [AWS Microservices Plan](docs/aws-microservices-plan.md).

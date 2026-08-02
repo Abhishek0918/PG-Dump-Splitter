@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 class SubmitPathRequest(BaseModel):
     dump_path: str = Field(..., description="Absolute or relative path to pg_dump SQL file")
-    repository_mode: bool = Field(default=False, description="Generate Git-ready database repository structure")
 
 
 class JobResponse(BaseModel):
@@ -31,7 +30,6 @@ class JobResponse(BaseModel):
     memory_bytes: int | None = None
     objects_processed: int = 0
     events_count: int = 0
-    repository_mode: bool = False
 
 
 class JobEventResponse(BaseModel):
