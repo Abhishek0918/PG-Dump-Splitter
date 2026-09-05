@@ -4,7 +4,7 @@ import { api } from "./api";
 import { DataMigration } from "./components/DataMigration";
 import { passwordStrength, useLocalAuth } from "./hooks/useLocalAuth";
 import type { LocalUser } from "./hooks/useLocalAuth";
-import type { DumpObject, JobEvent, JobResponse, RestorePlan, RestoreScript, TreeNode, VisualizationPayload } from "./types";
+import type { DumpObject, JobEvent, JobResponse, RestorePlan, RestoreScript, SchemaIntelligencePayload, TreeNode, VisualizationPayload } from "./types";
 import { escapeHtml, formatBytes, formatCount, formatDate, formatDuration, highlightSql, iconText, prettyJobName, safeFilename } from "./utils";
 
 type View = "overview" | "files" | "erd" | "dependency" | "sql" | "restore" | "migration";
@@ -75,7 +75,8 @@ export default function App() {
   const [navigatorTree, setNavigatorTree] = useState<TreeNode | undefined>();
   const [outputTree, setOutputTree] = useState<TreeNode | undefined>();
   const [visualization, setVisualization] = useState<VisualizationPayload | null>(null);
-  const [restorePlan, setRestorePlan] = useState<RestorePlan | null>(null);
+    const [schemaIntelligence, setSchemaIntelligence] = useState<SchemaIntelligencePayload | null>(null);
+const [restorePlan, setRestorePlan] = useState<RestorePlan | null>(null);
   const [selectedObject, setSelectedObject] = useState<DumpObject | null>(null);
   const [selectedSql, setSelectedSql] = useState("");
   const [sqlSearch, setSqlSearch] = useState("");
@@ -190,6 +191,9 @@ export default function App() {
       scripts[0];
   }, [restoreMode, restorePlan?.scripts, restoreSchema]);
 
+  const filteredNavigatorTree = useMemo(() => filterTree(navigatorTree, objectFilter), [navigatorTree, objectFilter]);
+  const filteredOutputTree = useMemo(() => filterTree(outputTree, objectFilter), [outputTree, objectFilter]);
+
   async function refreshJobs(openFirst = false) {
     try {
       const payload = await api.jobs();
@@ -244,13 +248,14 @@ export default function App() {
   }
 
   async function loadArtifacts(jobId: string) {
-    const [treeResult, vizResult, restoreResult] = await Promise.allSettled([api.tree(jobId), api.visualization(jobId), api.restorePlan(jobId)]);
+    const [treeResult, vizResult, intelligenceResult, restoreResult] = await Promise.allSettled([api.tree(jobId), api.visualization(jobId), api.schemaIntelligence(jobId), api.restorePlan(jobId)]);
     if (treeResult.status === "fulfilled") {
       setNavigatorTree(treeResult.value.manifest?.navigator);
       setOutputTree(treeResult.value.tree);
     }
     if (vizResult.status === "fulfilled") setVisualization(vizResult.value);
-    if (restoreResult.status === "fulfilled") setRestorePlan(restoreResult.value);
+        if (intelligenceResult.status === "fulfilled") setSchemaIntelligence(intelligenceResult.value);
+if (restoreResult.status === "fulfilled") setRestorePlan(restoreResult.value);
   }
 
   async function submitPath(event: FormEvent) {
@@ -432,7 +437,7 @@ export default function App() {
             <div className="pane-header"><h2>Navigator</h2></div>
             <section className="navigator-section">
               <div className="section-line"><h3>Objects</h3><input value={objectFilter} onChange={(event) => setObjectFilter(event.target.value)} placeholder="Search objects" /></div>
-              <TreeView node={filterTree(navigatorTree, objectFilter)} selectedId={selectedObject?.object_id} onSelect={selectObject} empty="Run or open a completed job." />
+              <TreeView node={filteredNavigatorTree} selectedId={selectedObject?.object_id} onSelect={selectObject} empty="Run or open a completed job." />
             </section>
           </aside>
         )}
@@ -462,11 +467,12 @@ export default function App() {
                 <Metric label="Memory" value={activeJob?.memory_bytes ? formatBytes(activeJob.memory_bytes) : "Unavailable"} />
                 <Metric label="Events" value={formatCount(activeJob?.events_count)} />
               </div>
+              <SchemaIntelligencePanel intelligence={schemaIntelligence} />
               <JobHistory jobs={sortedJobs} compact={compactJobs} onCompact={() => { const next = !compactJobs; setCompactJobs(next); localStorage.setItem("pgsplit.compactJobs", next ? "1" : "0"); }} onOpen={openJob} activeId={activeJobId} filters={{ jobFilter, statusFilter, jobSort, setJobFilter, setStatusFilter, setJobSort }} />
             </section>
           )}
 
-          {activeView === "files" && <section className="workbench-view active"><TreeView node={filterTree(outputTree, objectFilter)} selectedId={selectedObject?.object_id} onSelect={selectObject} empty="Output files will appear here." /></section>}
+          {activeView === "files" && <section className="workbench-view active"><TreeView node={filteredOutputTree} selectedId={selectedObject?.object_id} onSelect={selectObject} empty="Output files will appear here." /></section>}
           {activeView === "erd" && <section className="workbench-view active"><ErdView visualization={visualization} filter={objectFilter} /></section>}
           {activeView === "dependency" && <section className="workbench-view active"><DependencyView visualization={visualization} filter={objectFilter} /></section>}
           {activeView === "sql" && <section className="workbench-view active"><SqlPreview selectedObject={selectedObject} sql={selectedSql} query={sqlSearch} setQuery={setSqlSearch} /></section>}
@@ -549,6 +555,7 @@ function ProductShell({ user, view, setView, theme, setTheme, signOut, children 
           </span>
         </button>
         <nav className="product-nav">
+          <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}>Home</button>
           <button className={view === "profile" ? "active" : ""} onClick={() => setView("profile")}>Profile</button>
           <button className={view === "splitter" ? "active" : ""} onClick={() => setView("splitter")}>Database Schema Splitter</button>
           <button className={view === "migration" ? "active" : ""} onClick={() => setView("migration")}>Database Migration</button>
@@ -696,6 +703,36 @@ function SearchResults({ query, items, onSelect }: { query: string; items: DumpO
   return <section className="search-results-panel"><div className="panel-title"><div><h3>Search Results</h3><p>{items.length.toLocaleString()} matches for "{query}"</p></div></div><div className="search-results">{items.length ? items.map((item) => <button className="search-result" key={item.object_id} onClick={() => onSelect(item.object_id)}><span className={`tree-icon icon-${item.object_type}`}>{iconText(item.object_type)}</span><span><span className="result-title">{item.schema ? `${item.schema}.${item.name}` : item.name}</span><span className="result-path">{item.path || item.object_id}</span></span><span className="tree-tag">{item.object_type}</span></button>) : <div className="command-empty">No matching objects found.</div>}</div></section>;
 }
 
+
+function SchemaIntelligencePanel({ intelligence }: { intelligence: SchemaIntelligencePayload | null }) {
+  if (!intelligence) return null;
+  const summary = intelligence.summary || {};
+  const schemas = (intelligence.schemas || []).slice(0, 8);
+  const hotspots = intelligence.relationship_hotspots || [];
+  return (
+    <section className="schema-intelligence-panel">
+      <div className="panel-title"><div><h3>Schema Intelligence</h3><p>Database-level facts extracted from the dump schema.</p></div></div>
+      <div className="overview-grid compact-grid">
+        <Metric label="Schemas" value={formatCount(summary.schema_count)} />
+        <Metric label="Tables" value={formatCount(summary.table_count)} />
+        <Metric label="Columns" value={formatCount(summary.column_count)} />
+        <Metric label="Foreign Keys" value={formatCount(summary.foreign_key_count)} />
+        <Metric label="Views" value={formatCount(summary.view_count)} />
+        <Metric label="Functions" value={formatCount(summary.function_count)} />
+      </div>
+      <div className="schema-intelligence-grid">
+        <div>
+          <h4>Schemas</h4>
+          <div className="schema-chip-list">{schemas.length ? schemas.map((schema) => <span className="schema-chip" key={schema.name || "global"}><strong>{schema.name || "global"}</strong><small>{formatCount(schema.object_count)} objects</small></span>) : <span className="muted">No schema objects found.</span>}</div>
+        </div>
+        <div>
+          <h4>Relationship Hotspots</h4>
+          <div className="hotspot-list">{hotspots.length ? hotspots.slice(0, 6).map((item) => <span className="hotspot-row" key={item.table}><strong>{item.table}</strong><small>{formatCount(item.inbound_count)} in | {formatCount(item.outbound_count)} out | {formatCount(item.dependent_object_count)} objects</small></span>) : <span className="muted">No relationships detected yet.</span>}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
 function JobHistory({ jobs, compact, activeId, filters, onCompact, onOpen }: { jobs: JobResponse[]; compact: boolean; activeId: string; filters: { jobFilter: string; statusFilter: string; jobSort: string; setJobFilter: (value: string) => void; setStatusFilter: (value: string) => void; setJobSort: (value: string) => void }; onCompact: () => void; onOpen: (jobId: string) => void }) {
   return <div className="jobs-panel"><div className="jobs-toolbar"><input value={filters.jobFilter} onChange={(event) => filters.setJobFilter(event.target.value)} placeholder="Search jobs" /><select value={filters.statusFilter} onChange={(event) => filters.setStatusFilter(event.target.value)}><option value="all">All</option><option value="completed">Completed</option><option value="running">Running</option><option value="failed">Failed</option><option value="queued">Queued</option></select><select value={filters.jobSort} onChange={(event) => filters.setJobSort(event.target.value)}><option value="created-desc">Newest</option><option value="created-asc">Oldest</option><option value="size-desc">Largest</option><option value="duration-desc">Slowest</option></select><button className="tool-button" onClick={onCompact}>{compact ? "List" : "Compact"}</button></div><div className={`jobs-list ${compact ? "compact" : ""}`}>{jobs.length ? jobs.map((job) => <div className={`job-row ${activeId === job.job_id ? "active" : ""}`} key={job.job_id}><button className="job-open" onClick={() => void onOpen(job.job_id)}><span className="job-name">{prettyJobName(job)}</span><span className="job-meta">{formatBytes(job.file_size_bytes)} | {formatDate(job.created_at)}</span></button><span className={`status-pill ${job.status}`}>{job.status}</span><span className="job-meta">{formatDuration(job.duration_seconds)}</span></div>) : "No jobs found."}</div></div>;
 }

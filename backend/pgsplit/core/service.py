@@ -142,6 +142,14 @@ class SplitterService:
             raise FileNotFoundError("Visualization manifest is missing")
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def get_schema_intelligence_payload(self, job_id: str) -> dict:
+        output_dir = self.get_output_dir(job_id)
+        if output_dir is None or not output_dir.exists():
+            raise FileNotFoundError("Schema intelligence is not ready yet")
+        path = output_dir / "manifest" / "schema_intelligence.json"
+        if not path.exists():
+            raise FileNotFoundError("Schema intelligence manifest is missing")
+        return json.loads(path.read_text(encoding="utf-8"))
     def get_restore_plan(self, job_id: str) -> dict:
         output_dir = self.get_output_dir(job_id)
         if output_dir is None or not output_dir.exists():

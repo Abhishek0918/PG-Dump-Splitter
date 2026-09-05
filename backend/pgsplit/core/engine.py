@@ -12,6 +12,7 @@ from pgsplit.models.metadata import DumpObject, SplitResult
 from pgsplit.core.output_tree import build_augmented_output_tree
 from pgsplit.parser.pg_dump_parser import PgDumpParser
 from pgsplit.restore.generator import RestoreScriptGenerator
+from pgsplit.core.schema_intelligence import build_schema_intelligence_payload
 from pgsplit.visualization.builder import build_visualization_payload
 from pgsplit.writers.file_writer import SplitFileWriter
 from pgsplit.writers.folder_builder import FolderBuilder
@@ -73,6 +74,7 @@ class DumpSplitterEngine:
         graph_payload = graph.to_dict()
         catalog_payload = build_catalog_payload(result.objects, dump_path.stem)
         visualization_payload = build_visualization_payload(result.objects)
+        schema_intelligence_payload = build_schema_intelligence_payload(result.objects)
 
         self._emit_progress(progress_callback, 86, "writing", "Writing manifest files", min(processed_bytes, file_size), len(result.objects))
         self.manifest_writer.write_objects(output_root, result.objects)
@@ -82,6 +84,7 @@ class DumpSplitterEngine:
         self.manifest_writer.write_json(output_root, "navigator.json", catalog_payload["navigator"])
         self.manifest_writer.write_json(output_root, "schema_index.json", catalog_payload["schema_index"])
         self.manifest_writer.write_json(output_root, "visualization.json", visualization_payload)
+        self.manifest_writer.write_json(output_root, "schema_intelligence.json", schema_intelligence_payload)
         self.manifest_writer.write_statistics(output_root, result.objects, result.warnings)
         self._emit_progress(progress_callback, 89, "writing", "Generating restore scripts", min(processed_bytes, file_size), len(result.objects))
         restore_manifest = self.restore_generator.generate(output_root, result.objects, restore_plan)

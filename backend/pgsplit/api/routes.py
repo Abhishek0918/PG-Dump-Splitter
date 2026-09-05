@@ -158,6 +158,15 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    @app.get("/api/jobs/{job_id}/schema-intelligence")
+    def get_job_schema_intelligence(job_id: str) -> dict[str, object]:
+        job = service.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        try:
+            return service.get_schema_intelligence_payload(job_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     @app.get("/api/jobs/{job_id}/restore-plan")
     def get_job_restore_plan(job_id: str) -> dict[str, object]:
         job = service.get_job(job_id)

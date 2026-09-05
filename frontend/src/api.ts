@@ -5,7 +5,8 @@ import type {
   RestorePlan,
   RestoreScriptPayload,
   SearchPayload,
-  SourcePayload,
+    SchemaIntelligencePayload,
+SourcePayload,
   TreePayload,
   VisualizationPayload
 } from "./types";
@@ -26,7 +27,8 @@ export const api = {
   events: (jobId: string) => requestJson<JobEvent[]>(`/api/jobs/${encodeURIComponent(jobId)}/events?limit=200`),
   tree: (jobId: string) => requestJson<TreePayload>(`/api/jobs/${encodeURIComponent(jobId)}/tree`),
   visualization: (jobId: string) => requestJson<VisualizationPayload>(`/api/jobs/${encodeURIComponent(jobId)}/visualization`),
-  restorePlan: (jobId: string) => requestJson<RestorePlan>(`/api/jobs/${encodeURIComponent(jobId)}/restore-plan`),
+    schemaIntelligence: (jobId: string) => requestJson<SchemaIntelligencePayload>(`/api/jobs/${encodeURIComponent(jobId)}/schema-intelligence`),
+restorePlan: (jobId: string) => requestJson<RestorePlan>(`/api/jobs/${encodeURIComponent(jobId)}/restore-plan`),
   object: (jobId: string, objectId: string) =>
     requestJson<DumpObject>(`/api/jobs/${encodeURIComponent(jobId)}/object?object_id=${encodeURIComponent(objectId)}`),
   source: (jobId: string, objectId: string) =>

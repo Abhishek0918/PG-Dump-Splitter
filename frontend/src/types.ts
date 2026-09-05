@@ -140,3 +140,41 @@ export interface SearchPayload {
     by_schema?: Record<string, number>;
   };
 }
+
+export interface SchemaIntelligencePayload {
+  summary?: {
+    schema_count?: number;
+    object_count?: number;
+    table_count?: number;
+    column_count?: number;
+    foreign_key_count?: number;
+    view_count?: number;
+    function_count?: number;
+    index_count?: number;
+    trigger_count?: number;
+  };
+  schemas?: Array<{
+    name?: string | null;
+    object_count: number;
+    counts_by_type: Record<string, number>;
+  }>;
+  tables?: Array<{
+    id: string;
+    schema?: string | null;
+    name: string;
+    column_count: number;
+    columns?: Array<Record<string, unknown>>;
+    primary_key?: string[];
+    foreign_keys?: Array<Record<string, unknown>>;
+    inbound_references?: Array<Record<string, unknown>>;
+    outbound_references?: Array<Record<string, unknown>>;
+    dependent_objects?: Record<string, string[]>;
+  }>;
+  relationship_hotspots?: Array<{
+    table: string;
+    inbound_count: number;
+    outbound_count: number;
+    dependent_object_count: number;
+  }>;
+  counts_by_type?: Record<string, number>;
+}
