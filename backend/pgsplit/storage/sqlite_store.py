@@ -27,6 +27,24 @@ def _duration_seconds(start: str | None, end: str | None) -> float | None:
 
 
 @dataclass(slots=True)
+class UserRecord:
+    user_id: str
+    name: str
+    email: str
+    password_hash: str
+    created_at: str
+    last_login_at: str | None
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "user_id": self.user_id,
+            "name": self.name,
+            "email": self.email,
+            "created_at": self.created_at,
+            "last_login_at": self.last_login_at,
+        }
+
+@dataclass(slots=True)
 class JobRecord:
     job_id: str
     source_path: str
@@ -125,8 +143,26 @@ class SQLiteStore:
 
     def _create_schema(self) -> None:
         ddl = """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_login_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(user_id),
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            remember_me INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS jobs (
             job_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL DEFAULT '__legacy__',
             source_path TEXT NOT NULL,
             source_type TEXT NOT NULL DEFAULT 'path',
             input_name TEXT NOT NULL DEFAULT '',
@@ -199,6 +235,7 @@ class SQLiteStore:
             "memory_bytes": "INTEGER",
             "objects_processed": "INTEGER NOT NULL DEFAULT 0",
             "events_count": "INTEGER NOT NULL DEFAULT 0",
+            "user_id": "TEXT NOT NULL DEFAULT '__legacy__'",
         }
         for name, definition in columns.items():
             if name not in existing:
@@ -239,7 +276,77 @@ class SQLiteStore:
             CREATE INDEX IF NOT EXISTS idx_objects_job_name ON objects(job_id, object_name);
             CREATE INDEX IF NOT EXISTS idx_objects_job_path ON objects(job_id, file_path);
             CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id, id);
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
             """
+        )
+
+    def create_user(self, user_id: str, name: str, email: str, password_hash: str) -> UserRecord:
+        created_at = _utc_now()
+        normalized_email = email.strip().lower()
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO users (user_id, name, email, password_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, name.strip(), normalized_email, password_hash, created_at),
+            )
+            connection.commit()
+        return UserRecord(user_id, name.strip(), normalized_email, password_hash, created_at, None)
+
+    def get_user_by_email(self, email: str) -> UserRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT user_id, name, email, password_hash, created_at, last_login_at FROM users WHERE email = ?",
+                (email.strip().lower(),),
+            ).fetchone()
+        return self._row_to_user(row) if row else None
+
+    def get_user_by_id(self, user_id: str) -> UserRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT user_id, name, email, password_hash, created_at, last_login_at FROM users WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return self._row_to_user(row) if row else None
+
+    def create_session(self, session_id: str, user_id: str, expires_at: str, remember_me: bool) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO sessions (session_id, user_id, created_at, expires_at, remember_me) VALUES (?, ?, ?, ?, ?)",
+                (session_id, user_id, _utc_now(), expires_at, int(remember_me)),
+            )
+            connection.execute("UPDATE users SET last_login_at = ? WHERE user_id = ?", (_utc_now(), user_id))
+            connection.commit()
+
+    def get_user_for_session(self, session_id: str, now: str | None = None) -> UserRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT users.user_id, users.name, users.email, users.password_hash, users.created_at, users.last_login_at
+                FROM sessions
+                JOIN users ON users.user_id = sessions.user_id
+                WHERE sessions.session_id = ? AND sessions.expires_at > ?
+                """,
+                (session_id, now or _utc_now()),
+            ).fetchone()
+        return self._row_to_user(row) if row else None
+
+    def delete_session(self, session_id: str) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            connection.commit()
+
+    @staticmethod
+    def _row_to_user(row: sqlite3.Row) -> UserRecord:
+        return UserRecord(
+            user_id=row["user_id"],
+            name=row["name"],
+            email=row["email"],
+            password_hash=row["password_hash"],
+            created_at=row["created_at"],
+            last_login_at=row["last_login_at"],
         )
 
     def create_job(
@@ -249,6 +356,7 @@ class SQLiteStore:
         source_type: str = "path",
         input_name: str | None = None,
         file_size_bytes: int = 0,
+        user_id: str = "__legacy__",
     ) -> None:
         created_at = _utc_now()
         with self._lock, self._connect() as connection:
@@ -256,6 +364,7 @@ class SQLiteStore:
                 """
                 INSERT INTO jobs (
                     job_id,
+                    user_id,
                     source_path,
                     source_type,
                     input_name,
@@ -266,10 +375,11 @@ class SQLiteStore:
                     progress_percent,
                     stage,
                     current_step)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
+                    user_id,
                     source_path,
                     source_type,
                     input_name or Path(source_path).name,
@@ -500,7 +610,7 @@ class SQLiteStore:
             )
             connection.commit()
 
-    def get_job(self, job_id: str) -> JobRecord | None:
+    def get_job(self, job_id: str, user_id: str | None = None) -> JobRecord | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -511,15 +621,15 @@ class SQLiteStore:
                     progress_percent, stage, current_step, duration_seconds,
                     memory_bytes, objects_processed, events_count
                 FROM jobs
-                WHERE job_id = ?
+                WHERE job_id = ? AND (? IS NULL OR user_id = ?)
                 """,
-                (job_id,),
+                (job_id, user_id, user_id),
             ).fetchone()
         if row is None:
             return None
         return self._row_to_job(row)
 
-    def list_jobs(self, limit: int = 50) -> list[JobRecord]:
+    def list_jobs(self, limit: int = 50, user_id: str | None = None) -> list[JobRecord]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -530,10 +640,11 @@ class SQLiteStore:
                     progress_percent, stage, current_step, duration_seconds,
                     memory_bytes, objects_processed, events_count
                 FROM jobs
+                WHERE ? IS NULL OR user_id = ?
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (user_id, user_id, limit),
             ).fetchall()
         return [self._row_to_job(row) for row in rows]
 

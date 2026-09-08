@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from pgsplit.api.auth import create_auth_router, current_user
 from pgsplit.api.schemas import JobEventResponse, JobResponse, SubmitPathRequest
 from pgsplit.core.config import SplitterConfig
 from pgsplit.core.service import SplitterService
+from pgsplit.storage import UserRecord
 
 
 def _as_job_response(job) -> JobResponse:
@@ -18,8 +20,10 @@ def _as_job_response(job) -> JobResponse:
 def create_api(config: SplitterConfig | None = None) -> FastAPI:
     cfg = config or SplitterConfig()
     service = SplitterService(cfg)
-
     app = FastAPI(title="PGSplit Enterprise", version="2.2.0")
+    app.include_router(create_auth_router(service.store))
+    auth_dep = current_user(service.store)
+
     repo_root = Path(__file__).resolve().parents[3]
     react_dist_dir = repo_root / "frontend" / "dist"
     react_assets_dir = react_dist_dir / "assets"
@@ -35,9 +39,9 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         return _frontend_response(react_dist_dir)
 
     @app.post("/api/jobs/path", response_model=JobResponse)
-    def create_job_from_path(payload: SubmitPathRequest) -> JobResponse:
+    def create_job_from_path(payload: SubmitPathRequest, user: UserRecord = Depends(auth_dep)) -> JobResponse:
         try:
-            job = service.submit_job_from_path(Path(payload.dump_path))
+            job = service.submit_job_from_path(Path(payload.dump_path), user_id=user.user_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PermissionError as exc:
@@ -47,23 +51,23 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         return _as_job_response(job)
 
     @app.post("/api/jobs/upload", response_model=JobResponse)
-    def create_job_from_upload(file: UploadFile = File(...)) -> JobResponse:
+    def create_job_from_upload(file: UploadFile = File(...), user: UserRecord = Depends(auth_dep)) -> JobResponse:
         if not (file.filename or "").lower().endswith(".sql"):
             raise HTTPException(status_code=400, detail="Only .sql files are accepted")
         try:
-            job = service.submit_job_from_upload(file)
+            job = service.submit_job_from_upload(file, user_id=user.user_id)
         except ValueError as exc:
             status_code = 413 if "exceeds maximum size" in str(exc) else 400
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
         return _as_job_response(job)
 
     @app.get("/api/jobs", response_model=list[JobResponse])
-    def list_jobs(limit: int = Query(default=50, ge=1, le=200)) -> list[JobResponse]:
-        return [_as_job_response(job) for job in service.list_jobs(limit=limit)]
+    def list_jobs(limit: int = Query(default=50, ge=1, le=200), user: UserRecord = Depends(auth_dep)) -> list[JobResponse]:
+        return [_as_job_response(job) for job in service.list_jobs(limit=limit, user_id=user.user_id)]
 
     @app.get("/api/jobs/{job_id}", response_model=JobResponse)
-    def get_job(job_id: str) -> JobResponse:
-        job = service.get_job(job_id)
+    def get_job(job_id: str, user: UserRecord = Depends(auth_dep)) -> JobResponse:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         return _as_job_response(job)
@@ -73,8 +77,9 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         job_id: str,
         schema: str | None = Query(default=None),
         object_type: str | None = Query(default=None),
+        user: UserRecord = Depends(auth_dep),
     ) -> dict[str, object]:
-        job = service.get_job(job_id)
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         objects = service.list_objects(job_id, schema=schema, object_type=object_type)
@@ -87,8 +92,9 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         schema: str | None = Query(default=None),
         object_type: str | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=500),
+        user: UserRecord = Depends(auth_dep),
     ) -> dict[str, object]:
-        job = service.get_job(job_id)
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         payload = service.search_objects(
@@ -108,15 +114,15 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         }
 
     @app.get("/api/jobs/{job_id}/events", response_model=list[JobEventResponse])
-    def get_job_events(job_id: str, limit: int = Query(default=200, ge=1, le=500)) -> list[JobEventResponse]:
-        job = service.get_job(job_id)
+    def get_job_events(job_id: str, limit: int = Query(default=200, ge=1, le=500), user: UserRecord = Depends(auth_dep)) -> list[JobEventResponse]:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         return [JobEventResponse(**event) for event in service.list_events(job_id, limit=limit)]
 
     @app.get("/api/jobs/{job_id}/object")
-    def get_job_object(job_id: str, object_id: str = Query(...)) -> dict[str, object]:
-        job = service.get_job(job_id)
+    def get_job_object(job_id: str, object_id: str = Query(...), user: UserRecord = Depends(auth_dep)) -> dict[str, object]:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         obj = service.get_object(job_id, object_id)
@@ -125,8 +131,8 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         return obj
 
     @app.get("/api/jobs/{job_id}/tree")
-    def get_job_tree(job_id: str) -> dict[str, object]:
-        job = service.get_job(job_id)
+    def get_job_tree(job_id: str, user: UserRecord = Depends(auth_dep)) -> dict[str, object]:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         try:
@@ -136,8 +142,8 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         return {"job_id": job_id, **explorer}
 
     @app.get("/api/jobs/{job_id}/manifest")
-    def get_job_manifest(job_id: str) -> dict[str, object]:
-        job = service.get_job(job_id)
+    def get_job_manifest(job_id: str, user: UserRecord = Depends(auth_dep)) -> dict[str, object]:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         output_dir = service.get_output_dir(job_id)
@@ -149,8 +155,8 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         return service.get_output_explorer(job_id)["manifest"]
 
     @app.get("/api/jobs/{job_id}/visualization")
-    def get_job_visualization(job_id: str) -> dict[str, object]:
-        job = service.get_job(job_id)
+    def get_job_visualization(job_id: str, user: UserRecord = Depends(auth_dep)) -> dict[str, object]:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         try:
@@ -159,8 +165,8 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/jobs/{job_id}/schema-intelligence")
-    def get_job_schema_intelligence(job_id: str) -> dict[str, object]:
-        job = service.get_job(job_id)
+    def get_job_schema_intelligence(job_id: str, user: UserRecord = Depends(auth_dep)) -> dict[str, object]:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         try:
@@ -168,8 +174,8 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     @app.get("/api/jobs/{job_id}/restore-plan")
-    def get_job_restore_plan(job_id: str) -> dict[str, object]:
-        job = service.get_job(job_id)
+    def get_job_restore_plan(job_id: str, user: UserRecord = Depends(auth_dep)) -> dict[str, object]:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         if job.status != "completed":
@@ -185,8 +191,9 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         mode: str = Query(default="full"),
         schema: str | None = Query(default=None),
         format: str = Query(default="json", pattern="^(json|text)$"),
+        user: UserRecord = Depends(auth_dep),
     ) -> object:
-        job = service.get_job(job_id)
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         if job.status != "completed":
@@ -200,8 +207,8 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         return {"job_id": job_id, **payload}
 
     @app.get("/api/jobs/{job_id}/restore-download")
-    def download_restore_assets(job_id: str) -> FileResponse:
-        job = service.get_job(job_id)
+    def download_restore_assets(job_id: str, user: UserRecord = Depends(auth_dep)) -> FileResponse:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         if job.status != "completed":
@@ -214,8 +221,8 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
         return FileResponse(archive, media_type="application/zip", filename=download_name)
 
     @app.get("/api/jobs/{job_id}/source")
-    def get_object_source(job_id: str, object_id: str = Query(...)) -> dict[str, str | None]:
-        job = service.get_job(job_id)
+    def get_object_source(job_id: str, object_id: str = Query(...), user: UserRecord = Depends(auth_dep)) -> dict[str, str | None]:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         try:
@@ -224,8 +231,8 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/jobs/{job_id}/download")
-    def download_job_archive(job_id: str) -> FileResponse:
-        job = service.get_job(job_id)
+    def download_job_archive(job_id: str, user: UserRecord = Depends(auth_dep)) -> FileResponse:
+        job = service.get_job(job_id, user_id=user.user_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
         if job.status != "completed" or not job.archive_path:

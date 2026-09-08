@@ -26,7 +26,7 @@ class SplitterService:
         self.runner = DumpAnalysisRunner(config, self.store)
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pgsplit")
 
-    def submit_job_from_path(self, dump_path: Path) -> JobRecord:
+    def submit_job_from_path(self, dump_path: Path, user_id: str = "__legacy__") -> JobRecord:
         dump_path = dump_path.expanduser().resolve()
         self._validate_path_job(dump_path)
         job_id = uuid4().hex
@@ -37,6 +37,7 @@ class SplitterService:
             source_type="path",
             input_name=input_name,
             file_size_bytes=dump_path.stat().st_size,
+            user_id=user_id,
         )
         self.executor.submit(self.runner.run, job_id, dump_path)
         job = self.store.get_job(job_id)
@@ -44,7 +45,7 @@ class SplitterService:
             raise RuntimeError("Failed to create job")
         return job
 
-    def submit_job_from_upload(self, upload: UploadFile) -> JobRecord:
+    def submit_job_from_upload(self, upload: UploadFile, user_id: str = "__legacy__") -> JobRecord:
         job_id = uuid4().hex
         raw_name = upload.filename or f"{job_id}.sql"
         safe_name = self._clean_input_name(raw_name)
@@ -72,6 +73,7 @@ class SplitterService:
             source_type="upload",
             input_name=safe_name,
             file_size_bytes=target_path.stat().st_size,
+            user_id=user_id,
         )
         self.executor.submit(self.runner.run, job_id, target_path)
         job = self.store.get_job(job_id)
@@ -79,11 +81,11 @@ class SplitterService:
             raise RuntimeError("Failed to create upload job")
         return job
 
-    def get_job(self, job_id: str) -> JobRecord | None:
-        return self.store.get_job(job_id)
+    def get_job(self, job_id: str, user_id: str | None = None) -> JobRecord | None:
+        return self.store.get_job(job_id, user_id=user_id)
 
-    def list_jobs(self, limit: int = 50) -> list[JobRecord]:
-        return self.store.list_jobs(limit=limit)
+    def list_jobs(self, limit: int = 50, user_id: str | None = None) -> list[JobRecord]:
+        return self.store.list_jobs(limit=limit, user_id=user_id)
 
     def list_objects(self, job_id: str, schema: str | None, object_type: str | None) -> list[dict]:
         return self.store.list_objects(job_id=job_id, schema=schema, object_type=object_type)
@@ -150,6 +152,7 @@ class SplitterService:
         if not path.exists():
             raise FileNotFoundError("Schema intelligence manifest is missing")
         return json.loads(path.read_text(encoding="utf-8"))
+
     def get_restore_plan(self, job_id: str) -> dict:
         output_dir = self.get_output_dir(job_id)
         if output_dir is None or not output_dir.exists():
