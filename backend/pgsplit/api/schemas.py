@@ -40,3 +40,8 @@ class JobEventResponse(BaseModel):
     stage: str
     message: str
     metadata: dict = Field(default_factory=dict)
+
+
+class DiffRequest(BaseModel):
+    base_job_id: str = Field(..., description="Job ID of the base schema")
+    target_job_id: str = Field(..., description="Job ID of the target schema")

@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from pgsplit.api.auth import create_auth_router, current_user
-from pgsplit.api.schemas import JobEventResponse, JobResponse, SubmitPathRequest
+from pgsplit.api.schemas import DiffRequest, JobEventResponse, JobResponse, SubmitPathRequest
 from pgsplit.core.config import SplitterConfig
 from pgsplit.core.service import SplitterService
 from pgsplit.storage import UserRecord
@@ -242,6 +242,19 @@ def create_api(config: SplitterConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Archive file missing")
         download_name = f"{Path(job.input_name or 'dump').stem}_split_output.zip"
         return FileResponse(archive, media_type="application/zip", filename=download_name)
+
+    @app.post("/api/diff")
+    def diff_jobs(payload: DiffRequest, user: UserRecord = Depends(auth_dep)) -> dict[str, object]:
+        try:
+            return service.diff_jobs(
+                base_job_id=payload.base_job_id,
+                target_job_id=payload.target_job_id,
+                user_id=user.user_id,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/{full_path:path}", include_in_schema=False, response_model=None)
     def spa_fallback(full_path: str) -> FileResponse | HTMLResponse:

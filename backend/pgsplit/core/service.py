@@ -207,6 +207,38 @@ class SplitterService:
             "sql": source_path.read_text(encoding="utf-8"),
         }
 
+    def diff_jobs(
+        self, base_job_id: str, target_job_id: str, user_id: str | None = None
+    ) -> dict[str, Any]:
+        from pgsplit.diff.engine import compare_schemas
+
+        base_job = self.get_job(base_job_id, user_id=user_id)
+        if base_job is None:
+            raise FileNotFoundError(f"Base job not found: {base_job_id}")
+        if base_job.status != "completed":
+            raise ValueError(f"Base job {base_job_id} is not completed (status: {base_job.status})")
+
+        target_job = self.get_job(target_job_id, user_id=user_id)
+        if target_job is None:
+            raise FileNotFoundError(f"Target job not found: {target_job_id}")
+        if target_job.status != "completed":
+            raise ValueError(f"Target job {target_job_id} is not completed (status: {target_job.status})")
+
+        base_schema = self.get_schema_intelligence_payload(base_job_id)
+        target_schema = self.get_schema_intelligence_payload(target_job_id)
+
+        base_objects = self.list_objects(base_job_id, schema=None, object_type=None)
+        target_objects = self.list_objects(target_job_id, schema=None, object_type=None)
+
+        diff = compare_schemas(base_schema, target_schema, base_objects, target_objects)
+        return {
+            "base_job_id": base_job_id,
+            "target_job_id": target_job_id,
+            "base_job_name": base_job.input_name,
+            "target_job_name": target_job.input_name,
+            **diff,
+        }
+
     @staticmethod
     def _clean_input_name(raw_name: str) -> str:
         safe_name = Path(raw_name).name.replace(" ", "_")
